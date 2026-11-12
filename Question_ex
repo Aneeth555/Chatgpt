@@ -132,9 +132,46 @@ Use null for unsupported fields.
 
     # Validate JSON using Pydantic
     try:
-        extracted_data = OnePagerExtraction.model_validate_json(
-            raw_output
-        )
+         # Parse the JSON response
+parsed_data = json.loads(raw_output)
+
+
+# Convert text representations of missing values into None
+def normalize_null_values(data):
+
+    if isinstance(data, dict):
+        return {
+            key: normalize_null_values(value)
+            for key, value in data.items()
+        }
+
+    elif isinstance(data, list):
+        return [
+            normalize_null_values(item)
+            for item in data
+        ]
+
+    elif isinstance(data, str):
+        if data.strip().lower() in [
+            "null",
+            "none",
+            "n/a",
+            "not available",
+            "not specified",
+            "unknown"
+        ]:
+            return None
+
+    return data
+
+
+parsed_data = normalize_null_values(parsed_data)
+
+
+# Validate normalized data using Pydantic
+extracted_data = OnePagerExtraction.model_validate(
+    parsed_data
+)
 
     except Exception as error:
         print("\nPydantic validation failed.")
