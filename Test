@@ -1,29 +1,21 @@
-from schemas.field_definitions import (
-    get_field_definitions,
-    get_all_field_names
+ 
+from schemas.one_pager_schema import OnePagerExtraction
+
+# Generate the JSON schema that will be sent to Ollama
+schema = OnePagerExtraction.model_json_schema()
+
+print("Schema generated successfully.")
+print("\nTop-level fields:")
+print(list(schema["properties"].keys()))
+
+print("\nCompany fields:")
+print(list(schema["$defs"]["CompanyInformation"]["properties"].keys()))
+
+print("\nProduct fields:")
+print(list(schema["$defs"]["ProductInformation"]["properties"].keys()))
+
+print("\nRoute to market definition:")
+print(
+    schema["$defs"]["ProductInformation"]
+    ["properties"]["route_to_market"]["description"]
 )
-
-
-definitions = get_field_definitions()
-
-field_names = get_all_field_names()
-
-print("\n========== FIELD DEFINITIONS ==========")
-
-for section, fields in definitions.items():
-
-    print(f"\n{section.upper()}")
-
-    for field_name, details in fields.items():
-
-        print(f"\nField: {field_name}")
-        print(f"Meaning: {details['description']}")
-
-print("\n========== FIELD COUNTS ==========")
-
-for section, fields in field_names.items():
-    print(f"{section}: {len(fields)} fields")
-
-total_fields = sum(len(fields) for fields in field_names.values())
-
-print(f"\nTotal fields: {total_fields}")
