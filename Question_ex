@@ -1,4 +1,4 @@
-
+ 
 import json
 import requests
 
@@ -15,40 +15,28 @@ def extract_from_questionnaire(
     company_name: str,
     product_name: str
 ):
-    """
-    Extract company and product information using
-    the questionnaire as the primary source.
-    """
-
     if not questionnaire_text or not questionnaire_text.strip():
         raise ValueError("Questionnaire text is empty.")
 
     field_definitions = get_field_definitions()
-
     schema = OnePagerExtraction.model_json_schema()
 
     system_prompt = """
 You are an information extraction system.
 
-Your task is to extract company and product information
-from the provided questionnaire.
+Extract company and product information ONLY from
+the supplied questionnaire.
 
 STRICT RULES:
-
-1. The questionnaire is your only information source.
-2. Do not use your general knowledge.
-3. Do not search the internet.
-4. Do not invent or assume information.
-5. Fill a field only when the questionnaire provides
-   sufficient supporting information.
-6. If information is missing or unclear, return null.
-7. Do not confuse route_to_market with deployment_type.
-8. Do not confuse funding with revenue.
-9. Do not confuse partners with customers.
-10. Return the exact nested JSON structure required
-    by the supplied schema.
-11. Include every field, even when its value is null.
-12. Do not add explanations outside the JSON.
+1. Do not use external knowledge.
+2. Do not invent or assume information.
+3. Use null when information is missing or unclear.
+4. Do not confuse route_to_market with deployment_type.
+5. Do not confuse funding with revenue.
+6. Do not confuse partners with customers.
+7. Follow the supplied JSON schema exactly.
+8. Include every required field.
+9. Return valid JSON only.
 """
 
     user_prompt = f"""
@@ -61,16 +49,11 @@ PRODUCT NAME:
 FIELD DEFINITIONS:
 {json.dumps(field_definitions, indent=2)}
 
-QUESTIONNAIRE CONTENT:
+QUESTIONNAIRE:
 {questionnaire_text}
 
-Extract the available information into the required
-company and product JSON structure.
-
-Remember:
-- Use only questionnaire information.
-- Missing information must be null.
-- Do not guess.
+Extract the information into the required JSON structure.
+Use null for unsupported fields.
 """
 
     payload = {
@@ -87,34 +70,79 @@ Remember:
         ],
         "format": schema,
         "stream": False,
+        "think": False,
         "options": {
-            "temperature": 0
+            "temperature": 0,
+            "num_predict": 2048
         }
     }
 
-    response = requests.post(
-        OLLAMA_URL,
-        json=payload,
-        timeout=300
-    )
+    print("\nConnecting to Ollama...")
+    print("Model:", MODEL_NAME)
+    print("API:", OLLAMA_URL)
 
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=300
+        )
+
+        response.raise_for_status()
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(
+            f"Could not communicate with Ollama: {error}"
+        ) from error
 
     response_data = response.json()
 
-    raw_output = response_data["message"]["content"]
+    # Debug: inspect the Ollama response
+    print("\n========== OLLAMA RESPONSE DETAILS ==========")
+    print("Response keys:", list(response_data.keys()))
+    print("Done reason:", response_data.get("done_reason"))
+
+    message = response_data.get("message", {})
+
+    print("Message keys:", list(message.keys()))
+
+    raw_output = message.get("content", "")
+
+    # Check for empty output before Pydantic validation
+    if not raw_output or not raw_output.strip():
+
+        thinking_output = message.get("thinking", "")
+
+        print("\nOllama returned empty message content.")
+
+        if thinking_output:
+            print("Thinking content was returned.")
+            print(thinking_output[:1000])
+
+        print("\nComplete response for debugging:")
+        print(json.dumps(response_data, indent=2))
+
+        raise ValueError(
+            "Ollama returned empty content. "
+            "Check the response details printed above."
+        )
 
     print("\n========== RAW QUESTIONNAIRE EXTRACTION ==========")
     print(raw_output)
 
-    # Validate the model's JSON using Pydantic
-    extracted_data = OnePagerExtraction.model_validate_json(
-        raw_output
-    )
+    # Validate JSON using Pydantic
+    try:
+        extracted_data = OnePagerExtraction.model_validate_json(
+            raw_output
+        )
 
-    # Ensure user-provided names remain authoritative
+    except Exception as error:
+        print("\nPydantic validation failed.")
+        print("Raw model response:", repr(raw_output))
+        raise error
+
+    # User-provided names are authoritative
     extracted_data.company.company_name = company_name
     extracted_data.product.product_name = product_name
 
     return extracted_data
-    
