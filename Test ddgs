@@ -1,0 +1,105 @@
+
+import json
+from pathlib import Path
+
+from search.ddgs_search import search_missing_fields
+
+
+# ============================================================
+# STEP 1: Project paths
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+EXTRACTION_FILE = OUTPUT_DIR / "questionnaire_extraction.json"
+MISSING_FILE = OUTPUT_DIR / "missing_fields.json"
+SEARCH_OUTPUT_FILE = OUTPUT_DIR / "search_results.json"
+
+
+# ============================================================
+# STEP 2: Load previous extraction
+# ============================================================
+
+if not EXTRACTION_FILE.exists():
+    raise FileNotFoundError(
+        f"Extraction file not found: {EXTRACTION_FILE}"
+    )
+
+if not MISSING_FILE.exists():
+    raise FileNotFoundError(
+        f"Missing-field report not found: {MISSING_FILE}"
+    )
+
+with open(EXTRACTION_FILE, "r", encoding="utf-8") as file:
+    extracted_data = json.load(file)
+
+with open(MISSING_FILE, "r", encoding="utf-8") as file:
+    missing_report = json.load(file)
+
+
+# ============================================================
+# STEP 3: Get company and product names
+# ============================================================
+
+company_name = extracted_data["company"]["company_name"]
+product_name = extracted_data["product"]["product_name"]
+
+print("=" * 60)
+print("ONE-PAGER GENERATOR - TARGETED WEB SEARCH")
+print("=" * 60)
+
+print("Company:", company_name)
+print("Product:", product_name)
+
+print(
+    "Missing fields:",
+    len(missing_report["all_missing_fields"])
+)
+
+
+# ============================================================
+# STEP 4: Search only missing fields
+# ============================================================
+
+search_results = search_missing_fields(
+    company_name=company_name,
+    product_name=product_name,
+    missing_report=missing_report,
+    max_results=5
+)
+
+
+# ============================================================
+# STEP 5: Save search results
+# ============================================================
+
+with open(
+    SEARCH_OUTPUT_FILE,
+    "w",
+    encoding="utf-8"
+) as file:
+
+    json.dump(
+        search_results,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+
+
+# ============================================================
+# STEP 6: Summary
+# ============================================================
+
+total_results = sum(
+    len(item["results"])
+    for item in search_results.values()
+)
+
+print("\n========== SEARCH SUMMARY ==========")
+print("Fields searched:", len(search_results))
+print("Total results:", total_results)
+print("Saved to:", SEARCH_OUTPUT_FILE)
+
+print("\nSearch completed.")
