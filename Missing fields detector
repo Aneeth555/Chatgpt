@@ -1,0 +1,97 @@
+
+from schemas.field_definitions import get_field_definitions
+
+
+# Values that should be treated as missing
+MISSING_VALUES = {
+    "",
+    "null",
+    "none",
+    "n/a",
+    "na",
+    "not available",
+    "not specified",
+    "unknown",
+    "not provided"
+}
+
+
+def is_missing(value):
+    """
+    Check whether a field contains a meaningful answer.
+    """
+
+    if value is None:
+        return True
+
+    if isinstance(value, str):
+        return value.strip().lower() in MISSING_VALUES
+
+    if isinstance(value, list):
+        return len(value) == 0 or all(is_missing(item) for item in value)
+
+    if isinstance(value, dict):
+        return len(value) == 0
+
+    return False
+
+
+def detect_missing_fields(extracted_data):
+    """
+    Identify missing and completed fields in the
+    questionnaire extraction.
+
+    Accepts either a Pydantic model or a dictionary.
+    """
+
+    # Convert Pydantic object to dictionary
+    if hasattr(extracted_data, "model_dump"):
+        extracted_data = extracted_data.model_dump()
+
+    field_definitions = get_field_definitions()
+
+    result = {
+        "company": {
+            "missing_fields": [],
+            "completed_fields": []
+        },
+        "product": {
+            "missing_fields": [],
+            "completed_fields": []
+        },
+        "all_missing_fields": []
+    }
+
+    # Inspect each section and its field definitions
+    for section_name, fields in field_definitions.items():
+
+        section_data = extracted_data.get(section_name, {})
+
+        for field_name, definition in fields.items():
+
+            value = section_data.get(field_name)
+
+            if is_missing(value):
+
+                result[section_name]["missing_fields"].append(
+                    field_name
+                )
+
+                result["all_missing_fields"].append({
+                    "section": section_name,
+                    "field": field_name,
+                    "description": definition.get(
+                        "description", ""
+                    ),
+                    "extract": definition.get(
+                        "extract", ""
+                    )
+                })
+
+            else:
+
+                result[section_name]["completed_fields"].append(
+                    field_name
+                )
+
+    return result
