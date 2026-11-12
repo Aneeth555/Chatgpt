@@ -1,0 +1,120 @@
+
+import json
+import requests
+
+from schemas.one_pager_schema import OnePagerExtraction
+from schemas.field_definitions import get_field_definitions
+from llm.ollama_client import MODEL_NAME
+
+
+OLLAMA_URL = "http://localhost:11434/api/chat"
+
+
+def extract_from_questionnaire(
+    questionnaire_text: str,
+    company_name: str,
+    product_name: str
+):
+    """
+    Extract company and product information using
+    the questionnaire as the primary source.
+    """
+
+    if not questionnaire_text or not questionnaire_text.strip():
+        raise ValueError("Questionnaire text is empty.")
+
+    field_definitions = get_field_definitions()
+
+    schema = OnePagerExtraction.model_json_schema()
+
+    system_prompt = """
+You are an information extraction system.
+
+Your task is to extract company and product information
+from the provided questionnaire.
+
+STRICT RULES:
+
+1. The questionnaire is your only information source.
+2. Do not use your general knowledge.
+3. Do not search the internet.
+4. Do not invent or assume information.
+5. Fill a field only when the questionnaire provides
+   sufficient supporting information.
+6. If information is missing or unclear, return null.
+7. Do not confuse route_to_market with deployment_type.
+8. Do not confuse funding with revenue.
+9. Do not confuse partners with customers.
+10. Return the exact nested JSON structure required
+    by the supplied schema.
+11. Include every field, even when its value is null.
+12. Do not add explanations outside the JSON.
+"""
+
+    user_prompt = f"""
+COMPANY NAME:
+{company_name}
+
+PRODUCT NAME:
+{product_name}
+
+FIELD DEFINITIONS:
+{json.dumps(field_definitions, indent=2)}
+
+QUESTIONNAIRE CONTENT:
+{questionnaire_text}
+
+Extract the available information into the required
+company and product JSON structure.
+
+Remember:
+- Use only questionnaire information.
+- Missing information must be null.
+- Do not guess.
+"""
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ],
+        "format": schema,
+        "stream": False,
+        "options": {
+            "temperature": 0
+        }
+    }
+
+    response = requests.post(
+        OLLAMA_URL,
+        json=payload,
+        timeout=300
+    )
+
+    response.raise_for_status()
+
+    response_data = response.json()
+
+    raw_output = response_data["message"]["content"]
+
+    print("\n========== RAW QUESTIONNAIRE EXTRACTION ==========")
+    print(raw_output)
+
+    # Validate the model's JSON using Pydantic
+    extracted_data = OnePagerExtraction.model_validate_json(
+        raw_output
+    )
+
+    # Ensure user-provided names remain authoritative
+    extracted_data.company.company_name = company_name
+    extracted_data.product.product_name = product_name
+
+    return extracted_data
+    
