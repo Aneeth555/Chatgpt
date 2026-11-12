@@ -1,0 +1,259 @@
+
+import re
+
+
+# ============================================================
+# Field-specific relevance keywords
+# ============================================================
+
+FIELD_KEYWORDS = {
+
+    "employee_count": [
+        "employee", "employees", "headcount",
+        "workforce", "staff", "team size",
+        "people", "employees worldwide"
+    ],
+
+    "headquarters": [
+        "headquarters", "headquartered",
+        "based in", "head office",
+        "corporate office", "located in",
+        "registered office"
+    ],
+
+    "funding": [
+        "funding", "funded", "investment",
+        "investor", "investors", "seed round",
+        "series a", "series b", "raised",
+        "venture capital"
+    ],
+
+    "revenue": [
+        "revenue", "annual revenue",
+        "sales revenue", "turnover",
+        "financial results", "earnings"
+    ],
+
+    "gtm_partners": [
+        "go-to-market", "channel partner",
+        "distribution partner", "reseller",
+        "strategic partner", "implementation partner",
+        "technology partner", "partnership"
+    ],
+
+    "key_customers": [
+        "customer", "customers", "client",
+        "clients", "case study", "customer story",
+        "deployed at", "used by"
+    ],
+
+    "competitors": [
+        "competitor", "competitors",
+        "alternative", "alternatives",
+        "competing products", "rival",
+        "market competition"
+    ],
+
+    "route_to_market": [
+        "direct sales", "sales channel",
+        "distribution", "reseller",
+        "subscription", "marketplace",
+        "channel sales", "go-to-market",
+        "sales model"
+    ],
+
+    "inference_hardware": [
+        "inference hardware", "inference",
+        "gpu", "cpu", "accelerator",
+        "inference server", "edge device",
+        "nvidia", "intel"
+    ],
+
+    "deployment_type": [
+        "cloud deployment", "cloud-based",
+        "on-premises", "on premise",
+        "edge deployment", "hybrid deployment",
+        "deployment model", "hosted"
+    ],
+
+    "training_hardware": [
+        "training hardware", "model training",
+        "training gpu", "gpu cluster",
+        "training infrastructure", "a100",
+        "h100", "tpu"
+    ],
+
+    "models": [
+        "machine learning model", "language model",
+        "neural network", "transformer",
+        "bert", "llm", "gnn",
+        "model architecture", "foundation model"
+    ],
+
+    "ai_framework": [
+        "pytorch", "tensorflow",
+        "transformers", "peft",
+        "lora", "keras",
+        "model training framework"
+    ],
+
+    "serving_framework": [
+        "model serving", "inference runtime",
+        "openvino", "onnx runtime",
+        "tensorrt", "vllm",
+        "torchserve", "triton"
+    ],
+
+    "additional_ai_software_stack": [
+        "kafka", "vector database",
+        "graph database", "mlops",
+        "data pipeline", "monitoring",
+        "observability", "memgraph",
+        "feature store"
+    ],
+
+    "vertical_market": [
+        "healthcare", "education",
+        "finance", "manufacturing",
+        "industry", "industries",
+        "vertical market", "use cases"
+    ],
+
+    "description": [
+        "product", "platform", "solution",
+        "capabilities", "features",
+        "what we do", "technology"
+    ]
+}
+
+
+def tokenize(text):
+    """
+    Convert text into normalized word tokens.
+    """
+
+    return re.findall(
+        r"[a-z0-9]+(?:[-'][a-z0-9]+)*",
+        (text or "").lower()
+    )
+
+
+def calculate_relevance_score(text, field):
+    """
+    Calculate a keyword-based relevance score.
+
+    Multiword phrases receive more weight than
+    individual keywords.
+    """
+
+    text_lower = (text or "").lower()
+
+    keywords = FIELD_KEYWORDS.get(
+        field,
+        [field.replace("_", " ")]
+    )
+
+    score = 0
+    matched_keywords = []
+
+    for keyword in keywords:
+
+        if " " in keyword or "-" in keyword:
+
+            if keyword in text_lower:
+                score += 3
+                matched_keywords.append(keyword)
+
+        else:
+
+            pattern = r"\b" + re.escape(keyword) + r"\b"
+
+            if re.search(pattern, text_lower):
+                score += 1
+                matched_keywords.append(keyword)
+
+    return {
+        "score": score,
+        "matched_keywords": matched_keywords
+    }
+
+
+def filter_chunks_for_field(
+    chunks,
+    field,
+    top_k=3,
+    minimum_score=1
+):
+    """
+    Select the most relevant chunks for one missing field.
+    """
+
+    scored_chunks = []
+
+    for chunk in chunks:
+
+        # Prefer the field association created during search
+        related_fields = chunk.get("related_fields", [])
+
+        if related_fields and field not in related_fields:
+            continue
+
+        relevance = calculate_relevance_score(
+            chunk.get("text", ""),
+            field
+        )
+
+        if relevance["score"] < minimum_score:
+            continue
+
+        scored_chunks.append({
+            **chunk,
+            "relevance_score": relevance["score"],
+            "matched_keywords": relevance["matched_keywords"]
+        })
+
+    # Highest relevance first
+    scored_chunks.sort(
+        key=lambda item: item["relevance_score"],
+        reverse=True
+    )
+
+    return scored_chunks[:top_k]
+
+
+def filter_chunks_for_missing_fields(
+    chunks,
+    missing_report,
+    top_k=3,
+    minimum_score=1
+):
+    """
+    Filter crawled chunks for each missing field.
+
+    Returns evidence grouped by company/product field.
+    """
+
+    filtered_results = {}
+
+    for field_info in missing_report.get(
+        "all_missing_fields", []
+    ):
+
+        section = field_info["section"]
+        field = field_info["field"]
+
+        relevant_chunks = filter_chunks_for_field(
+            chunks=chunks,
+            field=field,
+            top_k=top_k,
+            minimum_score=minimum_score
+        )
+
+        filtered_results[field] = {
+            "section": section,
+            "description": field_info.get("description", ""),
+            "chunks_found": len(relevant_chunks),
+            "evidence": relevant_chunks
+        }
+
+    return filtered_results
