@@ -1,0 +1,154 @@
+
+from schemas.one_pager_schema import OnePagerExtraction
+
+
+# ============================================================
+# MISSING VALUE DETECTION
+# ============================================================
+
+MISSING_VALUES = {
+    "",
+    "null",
+    "none",
+    "n/a",
+    "na",
+    "not available",
+    "not specified",
+    "not provided",
+    "unknown"
+}
+
+
+def is_missing(value):
+    """Check whether a value represents missing information."""
+
+    if value is None:
+        return True
+
+    if isinstance(value, str):
+        return value.strip().lower() in MISSING_VALUES
+
+    return False
+
+
+# ============================================================
+# CONVERT QUESTIONNAIRE DATA TO DICTIONARY
+# ============================================================
+
+def convert_to_dict(data):
+
+    if hasattr(data, "model_dump"):
+        return data.model_dump(mode="json")
+
+    return data
+
+
+# ============================================================
+# MERGE QUESTIONNAIRE AND WEB EXTRACTION
+# ============================================================
+
+def merge_extractions(
+    questionnaire_data,
+    web_results
+):
+    """
+    Merge questionnaire and web extraction results.
+
+    Priority:
+    1. Questionnaire information
+    2. Supported web information
+    3. None
+    """
+
+    questionnaire_data = convert_to_dict(
+        questionnaire_data
+    )
+
+    # Work on a separate copy
+    final_data = {
+        "company": dict(questionnaire_data.get("company", {})),
+        "product": dict(questionnaire_data.get("product", {}))
+    }
+
+    provenance = {}
+
+    # Inspect every field returned by web extraction
+    for field_name, web_data in web_results.items():
+
+        section = web_data.get("section")
+
+        if section not in ("company", "product"):
+            continue
+
+        if field_name not in final_data[section]:
+            continue
+
+        questionnaire_value = final_data[section][field_name]
+
+        # Questionnaire always has priority
+        if not is_missing(questionnaire_value):
+
+            provenance[field_name] = {
+                "selected_source": "questionnaire",
+                "answer": questionnaire_value,
+                "web_answer_ignored": web_data.get("answer"),
+                "reason": "Questionnaire answer has priority"
+            }
+
+            continue
+
+        # Check whether the web answer is usable
+        web_answer = web_data.get("answer")
+
+        web_evidence = web_data.get("evidence")
+        web_url = web_data.get("source_url")
+
+        web_is_valid = (
+            web_data.get("status") == "extracted"
+            and isinstance(web_answer, str)
+            and not is_missing(web_answer)
+            and isinstance(web_evidence, str)
+            and bool(web_evidence.strip())
+            and isinstance(web_url, str)
+            and web_url.startswith(("http://", "https://"))
+        )
+
+        if web_is_valid:
+
+            final_data[section][field_name] = web_answer.strip()
+
+            provenance[field_name] = {
+                "selected_source": "web",
+                "answer": web_answer.strip(),
+                "evidence": web_evidence,
+                "source_url": web_url,
+                "source_title": web_data.get("source_title")
+            }
+
+        else:
+
+            final_data[section][field_name] = None
+
+            provenance[field_name] = {
+                "selected_source": None,
+                "answer": None,
+                "web_status": web_data.get("status"),
+                "reason": "No sufficiently supported web answer"
+            }
+
+    # Normalize any remaining textual null values
+    for section in ("company", "product"):
+
+        for field_name, value in final_data[section].items():
+
+            if is_missing(value):
+                final_data[section][field_name] = None
+
+    # Validate the final structure
+    validated_data = OnePagerExtraction.model_validate(
+        final_data
+    )
+
+    final_json = validated_data.model_dump(mode="json")
+
+    return final_json, provenance
