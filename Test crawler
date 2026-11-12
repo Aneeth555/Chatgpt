@@ -1,0 +1,97 @@
+
+import json
+from pathlib import Path
+
+from crawling.crawl4ai_extractor import crawl_search_results
+
+
+# ============================================================
+# STEP 1: Project paths
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+SEARCH_FILE = OUTPUT_DIR / "search_results.json"
+
+CRAWLED_FILE = OUTPUT_DIR / "crawled_pages.json"
+
+
+# ============================================================
+# STEP 2: Load search results
+# ============================================================
+
+if not SEARCH_FILE.exists():
+    raise FileNotFoundError(
+        f"Search results not found: {SEARCH_FILE}"
+    )
+
+with open(SEARCH_FILE, "r", encoding="utf-8") as file:
+    search_results = json.load(file)
+
+
+# ============================================================
+# STEP 3: Crawl webpages
+# ============================================================
+
+print("=" * 60)
+print("ONE-PAGER GENERATOR - WEB CRAWLING TEST")
+print("=" * 60)
+
+crawled_pages = crawl_search_results(search_results)
+
+
+# ============================================================
+# STEP 4: Save crawled content
+# ============================================================
+
+with open(
+    CRAWLED_FILE,
+    "w",
+    encoding="utf-8"
+) as file:
+
+    json.dump(
+        crawled_pages,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+
+
+# ============================================================
+# STEP 5: Display summary
+# ============================================================
+
+successful = sum(
+    1 for page in crawled_pages
+    if page["success"] and page["content"].strip()
+)
+
+failed = len(crawled_pages) - successful
+
+print("\n========== CRAWLING SUMMARY ==========")
+
+print("Total unique URLs:", len(crawled_pages))
+print("Successful crawls:", successful)
+print("Failed or empty pages:", failed)
+
+print("\nSaved to:", CRAWLED_FILE)
+
+
+# Display a short content preview
+for page in crawled_pages:
+
+    print("\n" + "=" * 60)
+    print("TITLE:", page["title"])
+    print("URL:", page["url"])
+    print("RELATED FIELDS:", page["related_fields"])
+
+    if page["content"]:
+        print("\nCONTENT PREVIEW:")
+        print(page["content"][:500])
+    else:
+        print("\nNo readable content extracted.")
+
+print("\nCrawling test completed.")
