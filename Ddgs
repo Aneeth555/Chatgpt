@@ -1,0 +1,188 @@
+
+from ddgs import DDGS
+from urllib.parse import urlparse
+
+
+# ============================================================
+# Search configuration
+# ============================================================
+
+MAX_RESULTS_PER_QUERY = 5
+
+
+# Field-specific search terms
+FIELD_SEARCH_TERMS = {
+    "employee_count": "number of employees company size",
+    "headquarters": "official headquarters location",
+    "funding": "funding investment seed series funding",
+    "revenue": "company annual revenue",
+    "gtm_partners": "go to market partners channel partners",
+    "key_customers": "customers clients case studies",
+    "competitors": "competitors alternative products market",
+    "route_to_market": "sales distribution business model",
+    "inference_hardware": "AI inference hardware infrastructure",
+    "training_hardware": "AI model training hardware GPUs",
+    "models": "AI machine learning models architectures",
+    "ai_framework": "AI development training frameworks",
+    "serving_framework": "AI model serving inference frameworks",
+    "additional_ai_software_stack": "AI software technology stack infrastructure",
+    "vertical_market": "industries vertical markets use cases",
+    "description": "product features capabilities overview"
+}
+
+
+# Fields where official sources should be prioritized
+OFFICIAL_PRIORITY_FIELDS = {
+    "employee_count",
+    "headquarters",
+    "gtm_partners",
+    "key_customers",
+    "route_to_market",
+    "description",
+    "vertical_market",
+    "models",
+    "ai_framework",
+    "serving_framework",
+    "additional_ai_software_stack",
+    "training_hardware",
+    "inference_hardware"
+}
+
+
+def get_domain(url):
+    """Extract the domain from a URL."""
+
+    try:
+        return urlparse(url).netloc.lower().replace("www.", "")
+    except Exception:
+        return ""
+
+
+def build_search_query(
+    company_name,
+    product_name,
+    section,
+    field
+):
+    """
+    Generate a targeted search query for a missing field.
+    """
+
+    search_term = FIELD_SEARCH_TERMS.get(
+        field,
+        field.replace("_", " ")
+    )
+
+    if section == "company":
+
+        query = f"{company_name} {search_term}"
+
+    else:
+
+        query = (
+            f"{company_name} {product_name} "
+            f"{search_term}"
+        )
+
+    # Prioritize official sources for suitable fields
+    if field in OFFICIAL_PRIORITY_FIELDS:
+        query += " official company website"
+
+    return query
+
+
+def search_web(query, max_results=MAX_RESULTS_PER_QUERY):
+    """
+    Search the web using DDGS.
+
+    Returns title, URL, snippet and domain.
+    """
+
+    results = []
+
+    try:
+
+        with DDGS() as ddgs:
+
+            search_results = ddgs.text(
+                query,
+                max_results=max_results
+            )
+
+            for item in search_results:
+
+                url = item.get("href", "")
+
+                if not url:
+                    continue
+
+                results.append({
+                    "title": item.get("title", ""),
+                    "url": url,
+                    "snippet": item.get("body", ""),
+                    "domain": get_domain(url)
+                })
+
+    except Exception as error:
+
+        print(f"Search failed for query: {query}")
+        print("Error:", error)
+
+    return results
+
+
+def search_missing_fields(
+    company_name,
+    product_name,
+    missing_report,
+    max_results=MAX_RESULTS_PER_QUERY
+):
+    """
+    Search only for fields identified as missing.
+
+    Returns search results grouped by missing field.
+    """
+
+    search_output = {}
+
+    missing_fields = missing_report.get(
+        "all_missing_fields", []
+    )
+
+    print("\n========== TARGETED WEB SEARCH ==========")
+
+    for index, field_info in enumerate(
+        missing_fields, start=1
+    ):
+
+        section = field_info["section"]
+        field = field_info["field"]
+
+        query = build_search_query(
+            company_name=company_name,
+            product_name=product_name,
+            section=section,
+            field=field
+        )
+
+        print(f"\n[{index}/{len(missing_fields)}] Searching: {field}")
+        print("Query:", query)
+
+        results = search_web(
+            query=query,
+            max_results=max_results
+        )
+
+        search_output[field] = {
+            "section": section,
+            "query": query,
+            "results": results
+        }
+
+        print("Results found:", len(results))
+
+        for result in results:
+            print("-", result["title"])
+            print(" ", result["url"])
+
+    return search_output
