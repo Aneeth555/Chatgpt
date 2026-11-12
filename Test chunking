@@ -1,0 +1,163 @@
+
+import json
+from pathlib import Path
+
+from crawling.text_chunker import chunk_crawled_pages
+from processing.relevance_filter import (
+    filter_chunks_for_missing_fields
+)
+
+
+# ============================================================
+# STEP 1: Project paths
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+CRAWLED_FILE = OUTPUT_DIR / "crawled_pages.json"
+MISSING_FILE = OUTPUT_DIR / "missing_fields.json"
+
+CHUNKS_FILE = OUTPUT_DIR / "text_chunks.json"
+EVIDENCE_FILE = OUTPUT_DIR / "filtered_evidence.json"
+
+
+# ============================================================
+# STEP 2: Load input files
+# ============================================================
+
+if not CRAWLED_FILE.exists():
+    raise FileNotFoundError(
+        f"Crawled pages not found: {CRAWLED_FILE}"
+    )
+
+if not MISSING_FILE.exists():
+    raise FileNotFoundError(
+        f"Missing-field report not found: {MISSING_FILE}"
+    )
+
+with open(CRAWLED_FILE, "r", encoding="utf-8") as file:
+    crawled_pages = json.load(file)
+
+with open(MISSING_FILE, "r", encoding="utf-8") as file:
+    missing_report = json.load(file)
+
+
+# ============================================================
+# STEP 3: Generate text chunks
+# ============================================================
+
+print("=" * 60)
+print("ONE-PAGER GENERATOR - TEXT CHUNKING")
+print("=" * 60)
+
+print("Crawled webpages:", len(crawled_pages))
+
+chunks = chunk_crawled_pages(crawled_pages)
+
+print("Total text chunks:", len(chunks))
+
+
+# Save chunks
+with open(CHUNKS_FILE, "w", encoding="utf-8") as file:
+    json.dump(
+        chunks,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+
+print("Chunks saved:", CHUNKS_FILE)
+
+
+# ============================================================
+# STEP 4: Filter chunks by missing fields
+# ============================================================
+
+print("\n" + "=" * 60)
+print("RELEVANCE FILTERING")
+print("=" * 60)
+
+filtered_results = filter_chunks_for_missing_fields(
+    chunks=chunks,
+    missing_report=missing_report,
+    top_k=3,
+    minimum_score=1
+)
+
+
+# ============================================================
+# STEP 5: Display field-wise results
+# ============================================================
+
+total_relevant_chunks = 0
+
+for field, result in filtered_results.items():
+
+    count = result["chunks_found"]
+
+    total_relevant_chunks += count
+
+    print(f"\nField: {field}")
+    print("Relevant chunks:", count)
+
+    for evidence in result["evidence"]:
+
+        print(
+            "Score:",
+            evidence["relevance_score"]
+        )
+
+        print(
+            "Source:",
+            evidence["url"]
+        )
+
+        print(
+            "Matched keywords:",
+            evidence["matched_keywords"]
+        )
+
+        print(
+            "Preview:",
+            evidence["text"][:200].replace("\n", " ")
+        )
+
+
+# ============================================================
+# STEP 6: Save filtered evidence
+# ============================================================
+
+with open(
+    EVIDENCE_FILE,
+    "w",
+    encoding="utf-8"
+) as file:
+
+    json.dump(
+        filtered_results,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+
+
+# ============================================================
+# STEP 7: Summary
+# ============================================================
+
+print("\n" + "=" * 60)
+print("CHUNKING AND FILTERING SUMMARY")
+print("=" * 60)
+
+print("Webpages:", len(crawled_pages))
+print("Total chunks:", len(chunks))
+print("Missing fields:", len(filtered_results))
+print("Relevant field-chunk matches:", total_relevant_chunks)
+
+print("\nSaved files:")
+print(CHUNKS_FILE)
+print(EVIDENCE_FILE)
+
+print("\nProcessing completed.")
