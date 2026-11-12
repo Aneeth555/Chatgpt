@@ -78,6 +78,38 @@ print("\n[3/4] Pydantic validation successful.")
 
 
 # ============================================================
+# STEP 5: Detect Missing Fields
+# ============================================================
+
+print("\nDetecting missing fields...")
+
+missing_result = detect_missing_fields(extracted_data)
+
+print("\n========== MISSING FIELD REPORT ==========")
+
+print("\nCompany missing fields:")
+for field in missing_result["company"]["missing_fields"]:
+    print("-", field)
+
+print("\nProduct missing fields:")
+for field in missing_result["product"]["missing_fields"]:
+    print("-", field)
+
+print("\nTotal missing fields:",
+      len(missing_result["all_missing_fields"]))
+
+
+# Save missing-field report
+MISSING_FILE = OUTPUT_DIR / "missing_fields.json"
+
+MISSING_FILE.write_text(
+    json.dumps(missing_result, indent=2),
+    encoding="utf-8"
+)
+
+print("\nMissing-field report saved to:", MISSING_FILE)
+
+# ============================================================
 # STEP 5: Convert extraction to JSON
 # ============================================================
 
