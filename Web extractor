@@ -1,0 +1,368 @@
+
+import json
+import requests
+
+from llm.ollama_client import MODEL_NAME
+
+
+# ============================================================
+# OLLAMA CONFIGURATION
+# ============================================================
+
+OLLAMA_URL = "http://localhost:11434/api/chat"
+
+REQUEST_TIMEOUT = 300
+
+MAX_CHUNK_CHARACTERS = 2500
+
+
+# ============================================================
+# JSON RESPONSE FORMAT
+# ============================================================
+
+WEB_ANSWER_FORMAT = {
+    "type": "object",
+    "properties": {
+        "answer": {
+            "type": ["string", "null"]
+        },
+        "evidence": {
+            "type": ["string", "null"]
+        },
+        "source_id": {
+            "type": ["string", "null"]
+        }
+    },
+    "required": [
+        "answer",
+        "evidence",
+        "source_id"
+    ]
+}
+
+
+# ============================================================
+# PREPARE EVIDENCE FOR ONE FIELD
+# ============================================================
+
+def prepare_field_evidence(evidence_chunks):
+    """
+    Prepare a compact evidence context for one missing field.
+
+    Assigns source IDs in Python so the model can refer
+    to a source without generating its own URL.
+    """
+
+    sources = []
+    evidence_text = []
+
+    for index, chunk in enumerate(evidence_chunks, start=1):
+
+        source_id = f"S{index}"
+
+        source = {
+            "source_id": source_id,
+            "title": chunk.get("title", ""),
+            "url": chunk.get("url", ""),
+            "domain": chunk.get("domain", "")
+        }
+
+        sources.append(source)
+
+        text = chunk.get("text", "")
+
+        # Limit each chunk to control the model context
+        text = text[:MAX_CHUNK_CHARACTERS]
+
+        evidence_text.append(
+            f"""
+[SOURCE {source_id}]
+Title: {source['title']}
+URL: {source['url']}
+Content:
+{text}
+"""
+        )
+
+    return "\n".join(evidence_text), sources
+
+
+# ============================================================
+# EXTRACT ONE FIELD USING OLLAMA
+# ============================================================
+
+def extract_single_field(
+    field_name,
+    section,
+    description,
+    evidence_chunks
+):
+    """
+    Ask Qwen to extract one missing field from
+    the supplied webpage evidence.
+    """
+
+    if not evidence_chunks:
+        return {
+            "answer": None,
+            "evidence": None,
+            "source_url": None,
+            "status": "no_relevant_evidence"
+        }
+
+    evidence_text, sources = prepare_field_evidence(
+        evidence_chunks
+    )
+
+    source_ids = {
+        source["source_id"]: source
+        for source in sources
+    }
+
+    system_prompt = """
+You are a factual information extraction assistant.
+
+Your task is to extract information for one specific
+company or product field using ONLY the supplied webpage
+evidence.
+
+STRICT RULES:
+
+1. Do not use outside knowledge.
+2. Do not guess or assume missing information.
+3. Do not combine unrelated facts.
+4. Return null when the evidence does not support an answer.
+5. Do not confuse similar fields.
+6. Keep answers concise and factual.
+7. Evidence must be a quotation or a short, faithful
+   excerpt from the supplied webpage content.
+8. Select only one source that directly supports the answer.
+9. Never invent a source ID.
+10. Return valid JSON only.
+"""
+
+    user_prompt = f"""
+Extract the following one-pager field.
+
+Section: {section}
+Field name: {field_name}
+
+Field definition:
+{description}
+
+Available source IDs:
+{", ".join(source_ids.keys())}
+
+WEBPAGE EVIDENCE:
+{evidence_text}
+
+Return this JSON structure:
+
+{{
+    "answer": "extracted answer or null",
+    "evidence": "supporting text or null",
+    "source_id": "source ID or null"
+}}
+
+If no supplied webpage supports the requested field,
+return null for all three values.
+
+Remember:
+- Use only the supplied evidence.
+- Do not infer an answer from unrelated information.
+- Do not invent numerical values, currencies, dates,
+  customers, partners, or hardware specifications.
+"""
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ],
+        "format": WEB_ANSWER_FORMAT,
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0,
+            "num_ctx": 8192,
+            "num_predict": 512
+        }
+    }
+
+    try:
+
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=REQUEST_TIMEOUT
+        )
+
+        response.raise_for_status()
+
+        response_data = response.json()
+
+        content = response_data["message"]["content"]
+
+        result = json.loads(content)
+
+        answer = result.get("answer")
+        evidence = result.get("evidence")
+        source_id = result.get("source_id")
+
+        # Validate that the model selected a real source
+        selected_source = source_ids.get(source_id)
+
+        if not isinstance(answer, str) or not answer.strip():
+            return {
+                "answer": None,
+                "evidence": None,
+                "source_url": None,
+                "status": "no_supported_answer"
+            }
+
+        if not isinstance(evidence, str) or not evidence.strip():
+            return {
+                "answer": None,
+                "evidence": None,
+                "source_url": None,
+                "status": "missing_evidence"
+            }
+
+        if selected_source is None:
+            return {
+                "answer": None,
+                "evidence": None,
+                "source_url": None,
+                "status": "invalid_source"
+            }
+
+        # Ensure the evidence is actually present in the
+        # selected webpage chunk (case-insensitive check).
+        source_text = next(
+            (
+                chunk.get("text", "")
+                for index, chunk in enumerate(
+                    evidence_chunks, start=1
+                )
+                if f"S{index}" == source_id
+            ),
+            ""
+        )
+
+        normalized_source = " ".join(
+            source_text.lower().split()
+        )
+
+        normalized_evidence = " ".join(
+            evidence.lower().split()
+        )
+
+        if normalized_evidence not in normalized_source:
+            return {
+                "answer": None,
+                "evidence": None,
+                "source_url": None,
+                "status": "evidence_not_verified"
+            }
+
+        return {
+            "answer": answer.strip(),
+            "evidence": evidence.strip(),
+            "source_url": selected_source["url"],
+            "source_title": selected_source["title"],
+            "status": "extracted"
+        }
+
+    except requests.exceptions.ConnectionError:
+
+        raise RuntimeError(
+            "Could not connect to Ollama. "
+            "Check whether Ollama is running."
+        )
+
+    except requests.exceptions.Timeout:
+
+        raise RuntimeError(
+            f"Ollama timed out while extracting {field_name}."
+        )
+
+    except (ValueError, KeyError, TypeError) as error:
+
+        print(
+            f"Invalid response while extracting {field_name}: "
+            f"{error}"
+        )
+
+        return {
+            "answer": None,
+            "evidence": None,
+            "source_url": None,
+            "status": "invalid_model_response"
+        }
+
+
+# ============================================================
+# EXTRACT ALL MISSING FIELDS
+# ============================================================
+
+def extract_from_web(filtered_evidence):
+    """
+    Extract answers for all missing fields.
+
+    Each field is sent to Qwen separately.
+    """
+
+    web_results = {}
+
+    total_fields = len(filtered_evidence)
+
+    print("\n========== QWEN WEB EXTRACTION ==========")
+
+    for index, (field_name, field_data) in enumerate(
+        filtered_evidence.items(), start=1
+    ):
+
+        section = field_data.get("section", "")
+
+        description = field_data.get("description", "")
+
+        evidence_chunks = field_data.get("evidence", [])
+
+        print(
+            f"\n[{index}/{total_fields}] "
+            f"Extracting: {field_name}"
+        )
+
+        print("Relevant chunks:", len(evidence_chunks))
+
+        try:
+
+            result = extract_single_field(
+                field_name=field_name,
+                section=section,
+                description=description,
+                evidence_chunks=evidence_chunks
+            )
+
+        except RuntimeError:
+            raise
+
+        web_results[field_name] = {
+            "section": section,
+            **result
+        }
+
+        print("Status:", result["status"])
+        print("Answer:", result["answer"])
+
+        if result.get("source_url"):
+            print("Source:", result["source_url"])
+
+    return web_results
