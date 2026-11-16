@@ -1,4 +1,4 @@
-
+ 
 from ddgs import DDGS
 from urllib.parse import urlparse
 
@@ -12,14 +12,14 @@ MAX_RESULTS_PER_QUERY = 5
 
 # Field-specific search terms
 FIELD_SEARCH_TERMS = {
-    "employee_count": "number of employees company size",
-    "headquarters": "official headquarters location",
-    "funding": "funding investment seed series funding",
-    "revenue": "company annual revenue",
-    "gtm_partners": "go to market partners channel partners",
-    "key_customers": "customers clients case studies",
-    "competitors": "competitors alternative products market",
-    "route_to_market": "sales distribution business model",
+    "employee_count": "employees company size workforce",
+    "headquarters": "headquarters registered office location",
+    "funding": "funding investment amount raised",
+    "revenue": "annual revenue company revenue",
+    "gtm_partners": "official partners resellers distributors channel partners",
+    "key_customers": "customers clients case studies customer stories",
+    "competitors": "competitors alternatives competing products",
+    "route_to_market": "sales distribution business model go to market",
     "inference_hardware": "AI inference hardware infrastructure",
     "training_hardware": "AI model training hardware GPUs",
     "models": "AI machine learning models architectures",
@@ -31,7 +31,7 @@ FIELD_SEARCH_TERMS = {
 }
 
 
-# Fields where official sources should be prioritized
+# Fields where official sources are preferred
 OFFICIAL_PRIORITY_FIELDS = {
     "employee_count",
     "headquarters",
@@ -49,15 +49,199 @@ OFFICIAL_PRIORITY_FIELDS = {
 }
 
 
+# ============================================================
+# Domain utilities
+# ============================================================
+
 def get_domain(url):
-    """Extract the domain from a URL."""
+    """Extract and normalize the domain from a URL."""
 
     try:
-        return urlparse(url).netloc.lower().replace("www.", "")
+        domain = urlparse(url).netloc.lower()
+        domain = domain.split(":")[0]
+
+        if domain.startswith("www."):
+            domain = domain[4:]
+
+        return domain
+
     except Exception:
         return ""
 
 
+def classify_source(url, official_domain=None):
+    """
+    Classify a search result.
+
+    Priority:
+    1. Verified official company domain
+    2. LinkedIn company pages
+    3. Other sources
+    """
+
+    domain = get_domain(url)
+
+    if official_domain:
+
+        official_domain = official_domain.lower().strip()
+
+        official_domain = official_domain.replace(
+            "https://", ""
+        ).replace("http://", "")
+
+        official_domain = official_domain.split("/")[0]
+
+        if official_domain.startswith("www."):
+            official_domain = official_domain[4:]
+
+        if (
+            domain == official_domain
+            or domain.endswith("." + official_domain)
+        ):
+            return "official_website"
+
+    if domain == "linkedin.com" or domain.endswith(".linkedin.com"):
+        return "linkedin"
+
+    return "other"
+
+
+def get_source_priority(source_type):
+    """Lower number means higher priority."""
+
+    priorities = {
+        "official_website": 1,
+        "linkedin": 2,
+        "other": 3
+    }
+
+    return priorities.get(source_type, 4)
+
+
+# ============================================================
+# Search query generation
+# ============================================================
+
+def build_search_queries(
+    company_name,
+    product_name,
+    section,
+    field
+):
+    """
+    Generate one or more targeted search queries.
+
+    Employee count receives separate official website
+    and LinkedIn searches.
+    """
+
+    company = f'"{company_name}"'
+
+    product = ""
+
+    if product_name:
+        product = f'"{product_name}"'
+
+    search_term = FIELD_SEARCH_TERMS.get(
+        field,
+        field.replace("_", " ")
+    )
+
+    # --------------------------------------------------------
+    # Employee count: dedicated searches
+    # --------------------------------------------------------
+
+    if field == "employee_count":
+
+        return [
+            f'{company} employee count official website',
+            f'site:linkedin.com/company/ {company} employees',
+            f'{company} company size number of employees'
+        ]
+
+    # --------------------------------------------------------
+    # Headquarters
+    # --------------------------------------------------------
+
+    if field == "headquarters":
+
+        return [
+            f'{company} headquarters official',
+            f'{company} company registered office location'
+        ]
+
+    # --------------------------------------------------------
+    # GTM partners
+    # --------------------------------------------------------
+
+    if field == "gtm_partners":
+
+        return [
+            f'{company} official partners',
+            f'{company} reseller distributor channel partner',
+            f'{company} technology implementation partners'
+        ]
+
+    # --------------------------------------------------------
+    # Key customers
+    # --------------------------------------------------------
+
+    if field == "key_customers":
+
+        return [
+            f'{company} customers official case studies',
+            f'{company} client success stories',
+            f'{company} organizations using customer'
+        ]
+
+    # --------------------------------------------------------
+    # Competitors
+    # --------------------------------------------------------
+
+    if field == "competitors":
+
+        return [
+            f'{company} competitors',
+            f'{company} alternatives competing products',
+            f'{company} market competitors comparison'
+        ]
+
+    # --------------------------------------------------------
+    # Funding and revenue
+    # --------------------------------------------------------
+
+    if field == "funding":
+
+        return [
+            f'{company} funding amount raised investment',
+            f'{company} funding rounds investors'
+        ]
+
+    if field == "revenue":
+
+        return [
+            f'{company} annual revenue financial information',
+            f'{company} estimated revenue'
+        ]
+
+    # --------------------------------------------------------
+    # Other company and product fields
+    # --------------------------------------------------------
+
+    if section == "company":
+
+        return [
+            f'{company} {search_term}',
+            f'{company} official {search_term}'
+        ]
+
+    return [
+        f'{company} {product} {search_term}',
+        f'{product} {company_name} official product information'
+    ]
+
+
+# Backward-compatible function
 def build_search_query(
     company_name,
     product_name,
@@ -65,37 +249,37 @@ def build_search_query(
     field
 ):
     """
-    Generate a targeted search query for a missing field.
+    Generate the first targeted query.
+
+    Retained for compatibility with existing code.
     """
 
-    search_term = FIELD_SEARCH_TERMS.get(
-        field,
-        field.replace("_", " ")
+    queries = build_search_queries(
+        company_name,
+        product_name,
+        section,
+        field
     )
 
-    if section == "company":
-
-        query = f"{company_name} {search_term}"
-
-    else:
-
-        query = (
-            f"{company_name} {product_name} "
-            f"{search_term}"
-        )
-
-    # Prioritize official sources for suitable fields
-    if field in OFFICIAL_PRIORITY_FIELDS:
-        query += " official company website"
-
-    return query
+    return queries[0] if queries else ""
 
 
-def search_web(query, max_results=MAX_RESULTS_PER_QUERY):
+# ============================================================
+# Web search
+# ============================================================
+
+def search_web(
+    query,
+    max_results=MAX_RESULTS_PER_QUERY
+):
     """
     Search the web using DDGS.
 
-    Returns title, URL, snippet and domain.
+    Returns:
+        title
+        url
+        snippet
+        domain
     """
 
     results = []
@@ -131,16 +315,75 @@ def search_web(query, max_results=MAX_RESULTS_PER_QUERY):
     return results
 
 
+# ============================================================
+# Result ranking and duplicate removal
+# ============================================================
+
+def rank_and_deduplicate_results(
+    results,
+    official_domain=None
+):
+    """
+    Remove duplicate URLs and prioritize sources.
+
+    Priority:
+        Official website
+        LinkedIn
+        Other sources
+    """
+
+    unique_results = {}
+
+    for result in results:
+
+        url = result.get("url", "").strip()
+
+        if not url:
+            continue
+
+        normalized_url = url.rstrip("/").lower()
+
+        source_type = classify_source(
+            url,
+            official_domain
+        )
+
+        result["source_type"] = source_type
+        result["source_priority"] = get_source_priority(
+            source_type
+        )
+
+        if normalized_url not in unique_results:
+
+            unique_results[normalized_url] = result
+
+    sorted_results = sorted(
+        unique_results.values(),
+        key=lambda item: item["source_priority"]
+    )
+
+    return sorted_results
+
+
+# ============================================================
+# Search missing fields
+# ============================================================
+
 def search_missing_fields(
     company_name,
     product_name,
     missing_report,
-    max_results=MAX_RESULTS_PER_QUERY
+    max_results=MAX_RESULTS_PER_QUERY,
+    official_domain=None
 ):
     """
-    Search only for fields identified as missing.
+    Search only for missing fields.
 
-    Returns search results grouped by missing field.
+    Results are grouped by field.
+
+    official_domain:
+        Optional verified company domain.
+        Example: assessli.com
     """
 
     search_output = {}
@@ -152,37 +395,72 @@ def search_missing_fields(
     print("\n========== TARGETED WEB SEARCH ==========")
 
     for index, field_info in enumerate(
-        missing_fields, start=1
+        missing_fields,
+        start=1
     ):
 
         section = field_info["section"]
         field = field_info["field"]
 
-        query = build_search_query(
+        queries = build_search_queries(
             company_name=company_name,
             product_name=product_name,
             section=section,
             field=field
         )
 
-        print(f"\n[{index}/{len(missing_fields)}] Searching: {field}")
-        print("Query:", query)
+        print(
+            f"\n[{index}/{len(missing_fields)}] "
+            f"Searching: {field}"
+        )
 
-        results = search_web(
-            query=query,
-            max_results=max_results
+        all_results = []
+
+        # Run multiple targeted searches
+        for query_index, query in enumerate(
+            queries,
+            start=1
+        ):
+
+            print(
+                f"\nQuery {query_index}/{len(queries)}:"
+            )
+            print(query)
+
+            results = search_web(
+                query=query,
+                max_results=max_results
+            )
+
+            all_results.extend(results)
+
+            print("Results found:", len(results))
+
+        # Rank and remove duplicates
+        ranked_results = rank_and_deduplicate_results(
+            all_results,
+            official_domain=official_domain
         )
 
         search_output[field] = {
             "section": section,
-            "query": query,
-            "results": results
+            "queries": queries,
+            "query": queries[0] if queries else "",
+            "results": ranked_results
         }
 
-        print("Results found:", len(results))
+        print(
+            "\nUnique results:",
+            len(ranked_results)
+        )
 
-        for result in results:
-            print("-", result["title"])
+        for result in ranked_results:
+
+            print(
+                f"- [{result['source_type']}] "
+                f"{result['title']}"
+            )
+
             print(" ", result["url"])
 
     return search_output
