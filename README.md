@@ -1,14 +1,20 @@
-"funding": {
+ 
+"employee_count": {
     "description": (
-        "Total funding amount raised by the company. "
-        "Return only the amount and currency. "
-        "Do not include descriptions such as seed funding, "
-        "Series A, or funding details."
+        "The number of people employed by the company, "
+        "or the employee-size range explicitly declared "
+        "by the company."
     ),
     "extract": (
-        "Extract the funding amount and currency only. "
-        "Preserve the original amount and currency. "
-        "If the currency is not specified, do not assume it."
+        "Extract only an explicitly stated company employee "
+        "count or company-size range. Prefer labelled values "
+        "such as 'Company size: 11-50 employees'. "
+        "Do not extract LinkedIn followers, page followers, "
+        "profile views, employees visible in a profile list, "
+        "or counts of people who follow the company. "
+        "A number is valid only when the surrounding context "
+        "clearly identifies it as the company's employee "
+        "count or company-size range. Preserve ranges exactly."
     ),
-    "example": "$400K USD"
+    "example": "11-50 employees"
 },
