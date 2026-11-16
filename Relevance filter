@@ -1,4 +1,4 @@
-
+ 
 import re
 
 
@@ -9,144 +9,211 @@ import re
 FIELD_KEYWORDS = {
 
     "employee_count": [
-        "employee", "employees", "headcount",
-        "workforce", "staff", "team size",
-        "people", "employees worldwide"
+        "employee count", "number of employees",
+        "employees worldwide", "company size",
+        "headcount", "workforce", "team size",
+        "employees", "staff"
     ],
 
     "headquarters": [
         "headquarters", "headquartered",
         "based in", "head office",
-        "corporate office", "located in",
-        "registered office"
+        "corporate office", "registered office"
     ],
 
     "funding": [
-        "funding", "funded", "investment",
-        "investor", "investors", "seed round",
-        "series a", "series b", "raised",
-        "venture capital"
+        "total funding", "funding amount",
+        "raised funding", "total raised",
+        "investment", "funding round",
+        "series a", "series b", "venture capital"
     ],
 
     "revenue": [
-        "revenue", "annual revenue",
-        "sales revenue", "turnover",
-        "financial results", "earnings"
+        "annual revenue", "company revenue",
+        "reported revenue", "total revenue",
+        "sales revenue", "turnover"
     ],
 
     "gtm_partners": [
-        "go-to-market", "channel partner",
-        "distribution partner", "reseller",
-        "strategic partner", "implementation partner",
-        "technology partner", "partnership"
+        "official partner", "channel partner",
+        "distribution partner", "reseller partner",
+        "strategic partnership", "implementation partner",
+        "technology partner", "distribution agreement",
+        "partner network", "partner ecosystem"
     ],
 
     "key_customers": [
-        "customer", "customers", "client",
-        "clients", "case study", "customer story",
-        "deployed at", "used by"
+        "our customers", "our clients",
+        "customer case study", "client case study",
+        "customer success story", "client success story",
+        "deployed at", "used by",
+        "trusted by", "customers include",
+        "clients include"
     ],
 
     "competitors": [
-        "competitor", "competitors",
-        "alternative", "alternatives",
-        "competing products", "rival",
-        "market competition"
+        "direct competitors", "main competitors",
+        "key competitors", "competitors include",
+        "competes with", "competing against",
+        "alternatives to", "alternative to",
+        "compared with", "competitive landscape"
     ],
 
     "route_to_market": [
         "direct sales", "sales channel",
-        "distribution", "reseller",
-        "subscription", "marketplace",
-        "channel sales", "go-to-market",
-        "sales model"
+        "distribution channel", "reseller",
+        "subscription model", "marketplace",
+        "channel sales", "go-to-market strategy",
+        "sales model", "commercial model"
     ],
 
     "inference_hardware": [
-        "inference hardware", "inference",
-        "gpu", "cpu", "accelerator",
-        "inference server", "edge device",
-        "nvidia", "intel"
+        "inference hardware", "inference server",
+        "inference accelerator", "gpu inference",
+        "edge inference", "nvidia gpu",
+        "intel accelerator"
     ],
 
     "deployment_type": [
         "cloud deployment", "cloud-based",
         "on-premises", "on premise",
         "edge deployment", "hybrid deployment",
-        "deployment model", "hosted"
+        "deployment model", "self-hosted"
     ],
 
     "training_hardware": [
         "training hardware", "model training",
         "training gpu", "gpu cluster",
-        "training infrastructure", "a100",
-        "h100", "tpu"
+        "training infrastructure", "nvidia a100",
+        "nvidia h100", "google tpu"
     ],
 
     "models": [
         "machine learning model", "language model",
-        "neural network", "transformer",
-        "bert", "llm", "gnn",
+        "neural network", "transformer model",
+        "bert model", "large language model",
         "model architecture", "foundation model"
     ],
 
     "ai_framework": [
         "pytorch", "tensorflow",
-        "transformers", "peft",
-        "lora", "keras",
-        "model training framework"
+        "hugging face transformers", "peft",
+        "lora", "keras", "training framework"
     ],
 
     "serving_framework": [
         "model serving", "inference runtime",
-        "openvino", "onnx runtime",
-        "tensorrt", "vllm",
-        "torchserve", "triton"
+        "onnx runtime", "tensorrt",
+        "vllm", "torchserve", "triton inference"
     ],
 
     "additional_ai_software_stack": [
-        "kafka", "vector database",
-        "graph database", "mlops",
-        "data pipeline", "monitoring",
-        "observability", "memgraph",
-        "feature store"
+        "vector database", "graph database",
+        "mlops", "data pipeline",
+        "model monitoring", "observability",
+        "feature store", "kafka"
     ],
 
     "vertical_market": [
-        "healthcare", "education",
-        "finance", "manufacturing",
-        "industry", "industries",
-        "vertical market", "use cases"
+        "healthcare industry", "education industry",
+        "financial services", "manufacturing industry",
+        "vertical market", "industries served",
+        "industry use cases", "target industries"
     ],
 
     "description": [
-        "product", "platform", "solution",
-        "capabilities", "features",
-        "what we do", "technology"
+        "product overview", "platform overview",
+        "product features", "platform capabilities",
+        "product capabilities", "what we do",
+        "technology platform", "product description"
     ]
 }
 
 
-def tokenize(text):
-    """
-    Convert text into normalized word tokens.
-    """
+# ============================================================
+# Field-specific minimum relevance scores
+# ============================================================
 
-    return re.findall(
-        r"[a-z0-9]+(?:[-'][a-z0-9]+)*",
-        (text or "").lower()
+FIELD_MINIMUM_SCORES = {
+
+    "employee_count": 2,
+    "headquarters": 2,
+    "funding": 2,
+    "revenue": 2,
+
+    "gtm_partners": 3,
+    "key_customers": 3,
+    "competitors": 3,
+
+    "route_to_market": 2,
+    "inference_hardware": 2,
+    "deployment_type": 2,
+    "training_hardware": 2,
+    "models": 2,
+    "ai_framework": 2,
+    "serving_framework": 2,
+    "additional_ai_software_stack": 2,
+    "vertical_market": 2,
+    "description": 2
+}
+
+
+# ============================================================
+# Text normalization
+# ============================================================
+
+def normalize_text(text):
+    """Normalize text for keyword matching."""
+
+    text = (text or "").lower()
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
     )
 
+    return text.strip()
+
+
+# ============================================================
+# Identity verification check
+# ============================================================
+
+def is_identity_verified(chunk):
+    """
+    Check whether the chunk passed company identity verification.
+
+    Supports identity metadata at the top level or
+    inside a metadata dictionary.
+    """
+
+    if chunk.get("identity_verified") is True:
+        return True
+
+    metadata = chunk.get("metadata", {})
+
+    if isinstance(metadata, dict):
+
+        if metadata.get("identity_verified") is True:
+            return True
+
+    return False
+
+
+# ============================================================
+# Relevance score calculation
+# ============================================================
 
 def calculate_relevance_score(text, field):
     """
-    Calculate a keyword-based relevance score.
+    Calculate field-specific relevance.
 
-    Multiword phrases receive more weight than
-    individual keywords.
+    Multiword phrases receive higher scores than
+    generic individual words.
     """
 
-    text_lower = (text or "").lower()
+    text_lower = normalize_text(text)
 
     keywords = FIELD_KEYWORDS.get(
         field,
@@ -158,17 +225,30 @@ def calculate_relevance_score(text, field):
 
     for keyword in keywords:
 
+        keyword = normalize_text(keyword)
+
+        if not keyword:
+            continue
+
+        # Phrase matching
         if " " in keyword or "-" in keyword:
 
             if keyword in text_lower:
+
                 score += 3
                 matched_keywords.append(keyword)
 
+        # Individual word matching
         else:
 
-            pattern = r"\b" + re.escape(keyword) + r"\b"
+            pattern = (
+                r"\b"
+                + re.escape(keyword)
+                + r"\b"
+            )
 
             if re.search(pattern, text_lower):
+
                 score += 1
                 matched_keywords.append(keyword)
 
@@ -178,25 +258,54 @@ def calculate_relevance_score(text, field):
     }
 
 
+# ============================================================
+# Filter chunks for one field
+# ============================================================
+
 def filter_chunks_for_field(
     chunks,
     field,
     top_k=3,
-    minimum_score=1
+    minimum_score=None
 ):
     """
-    Select the most relevant chunks for one missing field.
+    Select relevant and identity-verified chunks
+    for one missing field.
     """
 
     scored_chunks = []
 
+    if minimum_score is None:
+
+        minimum_score = FIELD_MINIMUM_SCORES.get(
+            field,
+            2
+        )
+
     for chunk in chunks:
 
-        # Prefer the field association created during search
-        related_fields = chunk.get("related_fields", [])
+        # ----------------------------------------------------
+        # Identity verification is mandatory
+        # ----------------------------------------------------
+
+        if not is_identity_verified(chunk):
+            continue
+
+        # ----------------------------------------------------
+        # Field association check
+        # ----------------------------------------------------
+
+        related_fields = chunk.get(
+            "related_fields",
+            []
+        )
 
         if related_fields and field not in related_fields:
             continue
+
+        # ----------------------------------------------------
+        # Relevance calculation
+        # ----------------------------------------------------
 
         relevance = calculate_relevance_score(
             chunk.get("text", ""),
@@ -221,26 +330,45 @@ def filter_chunks_for_field(
     return scored_chunks[:top_k]
 
 
+# ============================================================
+# Filter chunks for all missing fields
+# ============================================================
+
 def filter_chunks_for_missing_fields(
     chunks,
     missing_report,
     top_k=3,
-    minimum_score=1
+    minimum_score=None
 ):
     """
-    Filter crawled chunks for each missing field.
+    Filter crawled chunks for every missing field.
+
+    Only identity-verified chunks are considered.
 
     Returns evidence grouped by company/product field.
     """
 
     filtered_results = {}
 
-    for field_info in missing_report.get(
-        "all_missing_fields", []
+    missing_fields = missing_report.get(
+        "all_missing_fields",
+        []
+    )
+
+    print("\n========== EVIDENCE RELEVANCE FILTER ==========")
+
+    for index, field_info in enumerate(
+        missing_fields,
+        start=1
     ):
 
         section = field_info["section"]
         field = field_info["field"]
+
+        print(
+            f"\n[{index}/{len(missing_fields)}] "
+            f"Filtering: {field}"
+        )
 
         relevant_chunks = filter_chunks_for_field(
             chunks=chunks,
@@ -251,9 +379,19 @@ def filter_chunks_for_missing_fields(
 
         filtered_results[field] = {
             "section": section,
-            "description": field_info.get("description", ""),
+            "description": field_info.get(
+                "description", ""
+            ),
             "chunks_found": len(relevant_chunks),
             "evidence": relevant_chunks
         }
+
+        print(
+            "Relevant verified chunks:",
+            len(relevant_chunks)
+        )
+
+        if not relevant_chunks:
+            print("No suitable evidence found.")
 
     return filtered_results
