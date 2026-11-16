@@ -1,0 +1,130 @@
+
+from processing.relevance_filter import (
+    filter_chunks_for_missing_fields
+)
+
+
+# ============================================================
+# Sample chunks
+# ============================================================
+
+chunks = [
+
+    {
+        "chunk_id": "C1",
+        "text": (
+            "Assessli has 25 employees as of September 2026. "
+            "The company develops AI-powered solutions."
+        ),
+        "identity_verified": True,
+        "source_url": "https://www.assessli.com/",
+        "source_title": "Assessli Official Website"
+    },
+
+    {
+        "chunk_id": "C2",
+        "text": (
+            "Assessli customers include organizations "
+            "using its AI-powered platform."
+        ),
+        "identity_verified": True,
+        "source_url": "https://www.assessli.com/",
+        "source_title": "Assessli Customer Information"
+    },
+
+    {
+        "chunk_id": "C3",
+        "text": (
+            "Assessio competitors include iMocha "
+            "and other talent assessment platforms."
+        ),
+        "identity_verified": False,
+        "source_url": "https://example.com/assessio",
+        "source_title": "Assessio Competitors"
+    },
+
+    {
+        "chunk_id": "C4",
+        "text": (
+            "Assessli has strategic partnerships "
+            "with technology implementation partners."
+        ),
+        "identity_verified": True,
+        "source_url": "https://www.assessli.com/",
+        "source_title": "Assessli Partnerships"
+    },
+
+    {
+        "chunk_id": "C5",
+        "text": (
+            "This article discusses several AI companies "
+            "and their products."
+        ),
+        "identity_verified": False,
+        "source_url": "https://example.com/ai",
+        "source_title": "AI Companies"
+    }
+]
+
+
+# ============================================================
+# Missing fields
+# ============================================================
+
+missing_report = {
+    "all_missing_fields": [
+
+        {
+            "section": "company",
+            "field": "employee_count",
+            "description": "Number of company employees"
+        },
+
+        {
+            "section": "company",
+            "field": "key_customers",
+            "description": "Organizations using the company product"
+        },
+
+        {
+            "section": "company",
+            "field": "gtm_partners",
+            "description": "Company sales and distribution partners"
+        },
+
+        {
+            "section": "company",
+            "field": "competitors",
+            "description": "Companies competing with Assessli"
+        }
+    ]
+}
+
+
+# ============================================================
+# Run filter
+# ============================================================
+
+filtered = filter_chunks_for_missing_fields(
+    chunks=chunks,
+    missing_report=missing_report,
+    top_k=3
+)
+
+
+# ============================================================
+# Display results
+# ============================================================
+
+for field, data in filtered.items():
+
+    print("\nField:", field)
+    print("Chunks found:", data["chunks_found"])
+
+    for evidence in data["evidence"]:
+
+        print(
+            evidence["chunk_id"],
+            evidence["matched_keywords"],
+            evidence["relevance_score"]
+        )
