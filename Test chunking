@@ -1,163 +1,101 @@
-
-import json
-from pathlib import Path
-
-from crawling.text_chunker import chunk_crawled_pages
-from processing.relevance_filter import (
-    filter_chunks_for_missing_fields
+ 
+from crawling.text_chunker import (
+    chunk_crawled_pages
 )
 
 
 # ============================================================
-# STEP 1: Project paths
+# Sample crawled webpages
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+crawled_pages = [
 
-OUTPUT_DIR = PROJECT_ROOT / "output"
+    {
+        "success": True,
+        "title": "Assessli Official Website",
+        "url": "https://www.assessli.com/",
+        "final_url": "https://www.assessli.com/",
+        "domain": "assessli.com",
 
-CRAWLED_FILE = OUTPUT_DIR / "crawled_pages.json"
-MISSING_FILE = OUTPUT_DIR / "missing_fields.json"
+        "identity_verified": True,
+        "identity_reason": "Verified official company domain.",
+        "source_type": "official_website",
+        "source_priority": 1,
 
-CHUNKS_FILE = OUTPUT_DIR / "text_chunks.json"
-EVIDENCE_FILE = OUTPUT_DIR / "filtered_evidence.json"
+        "related_fields": [
+            "employee_count",
+            "description"
+        ],
 
+        "content": (
+            "Assessli develops AI-powered solutions. "
+            "The company has 25 employees. "
+            "Its platform provides personalized experiences. "
+        ) * 100
+    },
 
-# ============================================================
-# STEP 2: Load input files
-# ============================================================
+    {
+        "success": True,
+        "title": "Assessio Competitors",
+        "url": "https://example.com/assessio",
+        "final_url": "https://example.com/assessio",
+        "domain": "example.com",
 
-if not CRAWLED_FILE.exists():
-    raise FileNotFoundError(
-        f"Crawled pages not found: {CRAWLED_FILE}"
-    )
+        "identity_verified": False,
+        "identity_reason": "Different company detected.",
+        "source_type": "other",
+        "source_priority": 3,
 
-if not MISSING_FILE.exists():
-    raise FileNotFoundError(
-        f"Missing-field report not found: {MISSING_FILE}"
-    )
+        "related_fields": [
+            "competitors"
+        ],
 
-with open(CRAWLED_FILE, "r", encoding="utf-8") as file:
-    crawled_pages = json.load(file)
-
-with open(MISSING_FILE, "r", encoding="utf-8") as file:
-    missing_report = json.load(file)
-
-
-# ============================================================
-# STEP 3: Generate text chunks
-# ============================================================
-
-print("=" * 60)
-print("ONE-PAGER GENERATOR - TEXT CHUNKING")
-print("=" * 60)
-
-print("Crawled webpages:", len(crawled_pages))
-
-chunks = chunk_crawled_pages(crawled_pages)
-
-print("Total text chunks:", len(chunks))
-
-
-# Save chunks
-with open(CHUNKS_FILE, "w", encoding="utf-8") as file:
-    json.dump(
-        chunks,
-        file,
-        indent=2,
-        ensure_ascii=False
-    )
-
-print("Chunks saved:", CHUNKS_FILE)
+        "content": (
+            "Assessio competitors include iMocha. "
+            "This information belongs to Assessio. "
+        ) * 100
+    }
+]
 
 
 # ============================================================
-# STEP 4: Filter chunks by missing fields
+# Generate chunks
 # ============================================================
 
-print("\n" + "=" * 60)
-print("RELEVANCE FILTERING")
-print("=" * 60)
-
-filtered_results = filter_chunks_for_missing_fields(
-    chunks=chunks,
-    missing_report=missing_report,
-    top_k=3,
-    minimum_score=1
+chunks = chunk_crawled_pages(
+    crawled_pages
 )
 
 
 # ============================================================
-# STEP 5: Display field-wise results
+# Display results
 # ============================================================
 
-total_relevant_chunks = 0
+print("\n========== CHUNKING TEST ==========")
 
-for field, result in filtered_results.items():
-
-    count = result["chunks_found"]
-
-    total_relevant_chunks += count
-
-    print(f"\nField: {field}")
-    print("Relevant chunks:", count)
-
-    for evidence in result["evidence"]:
-
-        print(
-            "Score:",
-            evidence["relevance_score"]
-        )
-
-        print(
-            "Source:",
-            evidence["url"]
-        )
-
-        print(
-            "Matched keywords:",
-            evidence["matched_keywords"]
-        )
-
-        print(
-            "Preview:",
-            evidence["text"][:200].replace("\n", " ")
-        )
-
-
-# ============================================================
-# STEP 6: Save filtered evidence
-# ============================================================
-
-with open(
-    EVIDENCE_FILE,
-    "w",
-    encoding="utf-8"
-) as file:
-
-    json.dump(
-        filtered_results,
-        file,
-        indent=2,
-        ensure_ascii=False
-    )
-
-
-# ============================================================
-# STEP 7: Summary
-# ============================================================
-
-print("\n" + "=" * 60)
-print("CHUNKING AND FILTERING SUMMARY")
-print("=" * 60)
-
-print("Webpages:", len(crawled_pages))
 print("Total chunks:", len(chunks))
-print("Missing fields:", len(filtered_results))
-print("Relevant field-chunk matches:", total_relevant_chunks)
 
-print("\nSaved files:")
-print(CHUNKS_FILE)
-print(EVIDENCE_FILE)
+for chunk in chunks:
 
-print("\nProcessing completed.")
+    print("\nChunk ID:", chunk["chunk_id"])
+    print("Title:", chunk["title"])
+    print("URL:", chunk["url"])
+
+    print(
+        "Identity verified:",
+        chunk["identity_verified"]
+    )
+
+    print(
+        "Source type:",
+        chunk["source_type"]
+    )
+
+    print(
+        "Related fields:",
+        chunk["related_fields"]
+    )
+
+    print("Text preview:", chunk["text"][:150])
+
+    print("-" * 60)
