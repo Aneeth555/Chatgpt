@@ -1,4 +1,4 @@
-
+ 
 import json
 from pathlib import Path
 
@@ -14,7 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 SEARCH_FILE = OUTPUT_DIR / "search_results.json"
-
 CRAWLED_FILE = OUTPUT_DIR / "crawled_pages.json"
 
 
@@ -46,12 +45,7 @@ crawled_pages = crawl_search_results(search_results)
 # STEP 4: Save crawled content
 # ============================================================
 
-with open(
-    CRAWLED_FILE,
-    "w",
-    encoding="utf-8"
-) as file:
-
+with open(CRAWLED_FILE, "w", encoding="utf-8") as file:
     json.dump(
         crawled_pages,
         file,
@@ -80,13 +74,37 @@ print("Failed or empty pages:", failed)
 print("\nSaved to:", CRAWLED_FILE)
 
 
-# Display a short content preview
+# ============================================================
+# STEP 6: Verify metadata
+# ============================================================
+
+print("\n========== METADATA VERIFICATION ==========")
+
 for page in crawled_pages:
 
     print("\n" + "=" * 60)
+
     print("TITLE:", page["title"])
     print("URL:", page["url"])
+    print("DOMAIN:", page["domain"])
+
+    print(
+        "IDENTITY VERIFIED:",
+        page["identity_verified"]
+    )
+
+    print(
+        "IDENTITY REASON:",
+        page["identity_reason"]
+    )
+
+    print("SOURCE TYPE:", page["source_type"])
+    print("SOURCE PRIORITY:", page["source_priority"])
+
     print("RELATED FIELDS:", page["related_fields"])
+
+    print("SUCCESS:", page["success"])
+    print("CONTENT LENGTH:", page["content_length"])
 
     if page["content"]:
         print("\nCONTENT PREVIEW:")
