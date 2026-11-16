@@ -1,8 +1,11 @@
-
+ 
 import json
 from pathlib import Path
 
 from search.ddgs_search import search_missing_fields
+from processing.company_identity import (
+    filter_search_results_by_identity
+)
 
 
 # ============================================================
@@ -10,15 +13,17 @@ from search.ddgs_search import search_missing_fields
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 EXTRACTION_FILE = OUTPUT_DIR / "questionnaire_extraction.json"
 MISSING_FILE = OUTPUT_DIR / "missing_fields.json"
+
 SEARCH_OUTPUT_FILE = OUTPUT_DIR / "search_results.json"
 
 
 # ============================================================
-# STEP 2: Load previous extraction
+# STEP 2: Load previous extraction and missing fields
 # ============================================================
 
 if not EXTRACTION_FILE.exists():
@@ -54,7 +59,7 @@ print("Product:", product_name)
 
 print(
     "Missing fields:",
-    len(missing_report["all_missing_fields"])
+    len(missing_report.get("all_missing_fields", []))
 )
 
 
@@ -69,10 +74,75 @@ search_results = search_missing_fields(
     max_results=5
 )
 
+print("\nRaw search completed.")
+
 
 # ============================================================
-# STEP 5: Save search results
+# STEP 5: Verify company identity
 # ============================================================
+
+print("\n" + "=" * 60)
+print("COMPANY IDENTITY VERIFICATION")
+print("=" * 60)
+
+# No official domain is supplied at this stage.
+# Results are checked using the company identity module.
+
+verified_results = filter_search_results_by_identity(
+    search_output=search_results,
+    company_name=company_name,
+    official_domain=None
+)
+
+
+# ============================================================
+# STEP 6: Display verification summary
+# ============================================================
+
+total_raw = 0
+total_verified = 0
+total_rejected = 0
+
+for field, field_data in verified_results.items():
+
+    accepted = field_data.get("results", [])
+    rejected = field_data.get("rejected_results", [])
+
+    total_raw += len(accepted) + len(rejected)
+    total_verified += len(accepted)
+    total_rejected += len(rejected)
+
+    print(f"\nField: {field}")
+    print("Verified results:", len(accepted))
+    print("Rejected results:", len(rejected))
+
+    for result in accepted:
+        print(
+            "[VERIFIED]",
+            result.get("title", "")
+        )
+        print("URL:", result.get("url", ""))
+        print(
+            "Reason:",
+            result.get("identity_reason", "")
+        )
+
+    for result in rejected:
+        print(
+            "[REJECTED]",
+            result.get("title", "")
+        )
+        print(
+            "Reason:",
+            result.get("identity_reason", "")
+        )
+
+
+# ============================================================
+# STEP 7: Save identity-filtered search results
+# ============================================================
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 with open(
     SEARCH_OUTPUT_FILE,
@@ -81,7 +151,7 @@ with open(
 ) as file:
 
     json.dump(
-        search_results,
+        verified_results,
         file,
         indent=2,
         ensure_ascii=False
@@ -89,17 +159,21 @@ with open(
 
 
 # ============================================================
-# STEP 6: Summary
+# STEP 8: Final summary
 # ============================================================
 
-total_results = sum(
-    len(item["results"])
-    for item in search_results.values()
-)
+print("\n" + "=" * 60)
+print("SEARCH AND IDENTITY VERIFICATION SUMMARY")
+print("=" * 60)
 
-print("\n========== SEARCH SUMMARY ==========")
-print("Fields searched:", len(search_results))
-print("Total results:", total_results)
-print("Saved to:", SEARCH_OUTPUT_FILE)
+print("Company:", company_name)
+print("Product:", product_name)
 
-print("\nSearch completed.")
+print("Fields searched:", len(verified_results))
+print("Total raw results:", total_raw)
+print("Verified results:", total_verified)
+print("Rejected results:", total_rejected)
+
+print("\nSaved to:", SEARCH_OUTPUT_FILE)
+
+print("\nSearch and identity verification completed.")
