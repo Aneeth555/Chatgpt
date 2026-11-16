@@ -1,8 +1,13 @@
-
+ 
 import json
+import re
 import requests
 
 from llm.ollama_client import MODEL_NAME
+
+from schemas.field_definitions import (
+    get_field_definitions
+)
 
 
 # ============================================================
@@ -14,6 +19,47 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 REQUEST_TIMEOUT = 300
 
 MAX_CHUNK_CHARACTERS = 2500
+
+
+# ============================================================
+# LOAD SHARED FIELD DEFINITIONS
+# ============================================================
+
+FIELD_DEFINITIONS = get_field_definitions()
+
+
+def normalize_field_name(name):
+    """
+    Normalize field names to support minor differences
+    in spaces, hyphens and underscores.
+    """
+
+    return re.sub(
+        r"[\s\-]+",
+        "_",
+        str(name).strip().lower()
+    )
+
+
+def get_field_definition(section, field_name):
+    """
+    Retrieve the description and extraction instructions
+    from the shared field_definitions.py file.
+    """
+
+    section_definitions = FIELD_DEFINITIONS.get(
+        section,
+        {}
+    )
+
+    normalized_name = normalize_field_name(field_name)
+
+    for defined_name, definition in section_definitions.items():
+
+        if normalize_field_name(defined_name) == normalized_name:
+            return definition
+
+    return None
 
 
 # ============================================================
@@ -47,10 +93,7 @@ WEB_ANSWER_FORMAT = {
 
 def prepare_field_evidence(evidence_chunks):
     """
-    Prepare a compact evidence context for one missing field.
-
-    Assigns source IDs in Python so the model can refer
-    to a source without generating its own URL.
+    Prepare webpage evidence and assign source IDs.
     """
 
     sources = []
@@ -71,7 +114,6 @@ def prepare_field_evidence(evidence_chunks):
 
         text = chunk.get("text", "")
 
-        # Limit each chunk to control the model context
         text = text[:MAX_CHUNK_CHARACTERS]
 
         evidence_text.append(
@@ -88,21 +130,23 @@ Content:
 
 
 # ============================================================
-# EXTRACT ONE FIELD USING OLLAMA
+# EXTRACT ONE FIELD USING QWEN
 # ============================================================
 
 def extract_single_field(
     field_name,
     section,
     description,
+    extraction_instruction,
     evidence_chunks
 ):
     """
-    Ask Qwen to extract one missing field from
-    the supplied webpage evidence.
+    Extract one field using the shared field definition
+    and supplied webpage evidence.
     """
 
     if not evidence_chunks:
+
         return {
             "answer": None,
             "evidence": None,
@@ -119,60 +163,104 @@ def extract_single_field(
         for source in sources
     }
 
+    # --------------------------------------------------------
+    # SYSTEM PROMPT
+    # --------------------------------------------------------
+
     system_prompt = """
 You are a factual information extraction assistant.
 
-Your task is to extract information for one specific
-company or product field using ONLY the supplied webpage
-evidence.
+Your task is to extract information for a specific
+company or product field using ONLY the supplied
+webpage evidence.
+
+You will receive:
+- A field name
+- A field description
+- Field-specific extraction instructions
+- Relevant webpage evidence
+
+Understand the meaning of the field before extracting
+an answer.
 
 STRICT RULES:
 
-1. Do not use outside knowledge.
-2. Do not guess or assume missing information.
-3. Do not combine unrelated facts.
-4. Return null when the evidence does not support an answer.
+1. Use only the supplied webpage evidence.
+2. Follow the field description and extraction instructions.
+3. Do not use outside knowledge or previously learned facts.
+4. Do not guess, assume or invent information.
 5. Do not confuse similar fields.
-6. Keep answers concise and factual.
-7. Evidence must be a quotation or a short, faithful
-   excerpt from the supplied webpage content.
-8. Select only one source that directly supports the answer.
-9. Never invent a source ID.
-10. Return valid JSON only.
+6. Extract only information that answers the requested field.
+7. If evidence does not support an answer, return null.
+8. Preserve the original meaning and important details.
+9. Do not convert ranges into exact numerical values.
+10. Do not invent currencies, dates, units or specifications.
+11. Evidence must be an exact quotation or short excerpt
+    from the supplied webpage content.
+12. Select only one source that directly supports the answer.
+13. Never invent a source ID.
+14. Return valid JSON only.
+
+IMPORTANT:
+
+A keyword appearing in a webpage does not automatically
+mean that it answers the requested field.
+
+Understand the context and relationship between the
+information and the requested field before extracting it.
 """
 
+    # --------------------------------------------------------
+    # USER PROMPT
+    # --------------------------------------------------------
+
     user_prompt = f"""
-Extract the following one-pager field.
+Extract the requested one-pager field.
 
-Section: {section}
-Field name: {field_name}
+SECTION:
+{section}
 
-Field definition:
+FIELD NAME:
+{field_name}
+
+FIELD DESCRIPTION:
 {description}
 
-Available source IDs:
+FIELD-SPECIFIC EXTRACTION INSTRUCTIONS:
+{extraction_instruction}
+
+AVAILABLE SOURCE IDs:
 {", ".join(source_ids.keys())}
 
 WEBPAGE EVIDENCE:
 {evidence_text}
 
-Return this JSON structure:
+Return the following JSON structure:
 
 {{
     "answer": "extracted answer or null",
-    "evidence": "supporting text or null",
+    "evidence": "supporting webpage text or null",
     "source_id": "source ID or null"
 }}
 
-If no supplied webpage supports the requested field,
-return null for all three values.
+EXTRACTION REQUIREMENTS:
 
-Remember:
-- Use only the supplied evidence.
-- Do not infer an answer from unrelated information.
-- Do not invent numerical values, currencies, dates,
-  customers, partners, or hardware specifications.
+- Understand what information this field represents.
+- Follow the field-specific extraction instructions.
+- Examine the context surrounding the relevant information.
+- Do not select information merely because it contains
+  a similar keyword.
+- Do not mistake navigation links, profile counts,
+  unrelated numbers or page metadata for factual answers.
+- Use the smallest relevant evidence excerpt that
+  directly supports the answer.
+- If no evidence supports the requested field,
+  return null for answer, evidence and source_id.
 """
+
+    # --------------------------------------------------------
+    # OLLAMA REQUEST
+    # --------------------------------------------------------
 
     payload = {
         "model": MODEL_NAME,
@@ -216,10 +304,12 @@ Remember:
         evidence = result.get("evidence")
         source_id = result.get("source_id")
 
-        # Validate that the model selected a real source
-        selected_source = source_ids.get(source_id)
+        # ----------------------------------------------------
+        # VALIDATE ANSWER
+        # ----------------------------------------------------
 
         if not isinstance(answer, str) or not answer.strip():
+
             return {
                 "answer": None,
                 "evidence": None,
@@ -227,7 +317,12 @@ Remember:
                 "status": "no_supported_answer"
             }
 
+        # ----------------------------------------------------
+        # VALIDATE EVIDENCE
+        # ----------------------------------------------------
+
         if not isinstance(evidence, str) or not evidence.strip():
+
             return {
                 "answer": None,
                 "evidence": None,
@@ -235,7 +330,14 @@ Remember:
                 "status": "missing_evidence"
             }
 
+        # ----------------------------------------------------
+        # VALIDATE SOURCE ID
+        # ----------------------------------------------------
+
+        selected_source = source_ids.get(source_id)
+
         if selected_source is None:
+
             return {
                 "answer": None,
                 "evidence": None,
@@ -243,18 +345,15 @@ Remember:
                 "status": "invalid_source"
             }
 
-        # Ensure the evidence is actually present in the
-        # selected webpage chunk (case-insensitive check).
-        source_text = next(
-            (
-                chunk.get("text", "")
-                for index, chunk in enumerate(
-                    evidence_chunks, start=1
-                )
-                if f"S{index}" == source_id
-            ),
-            ""
-        )
+        # ----------------------------------------------------
+        # VERIFY EVIDENCE AGAINST ORIGINAL CHUNK
+        # ----------------------------------------------------
+
+        source_index = int(source_id[1:]) - 1
+
+        source_text = evidence_chunks[
+            source_index
+        ].get("text", "")
 
         normalized_source = " ".join(
             source_text.lower().split()
@@ -265,12 +364,17 @@ Remember:
         )
 
         if normalized_evidence not in normalized_source:
+
             return {
                 "answer": None,
                 "evidence": None,
                 "source_url": None,
                 "status": "evidence_not_verified"
             }
+
+        # ----------------------------------------------------
+        # RETURN VERIFIED EXTRACTION
+        # ----------------------------------------------------
 
         return {
             "answer": answer.strip(),
@@ -293,7 +397,7 @@ Remember:
             f"Ollama timed out while extracting {field_name}."
         )
 
-    except (ValueError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError, IndexError) as error:
 
         print(
             f"Invalid response while extracting {field_name}: "
@@ -314,9 +418,10 @@ Remember:
 
 def extract_from_web(filtered_evidence):
     """
-    Extract answers for all missing fields.
+    Extract all missing fields using shared field definitions.
 
-    Each field is sent to Qwen separately.
+    Qwen receives the appropriate description and extraction
+    instructions for every field.
     """
 
     web_results = {}
@@ -326,12 +431,11 @@ def extract_from_web(filtered_evidence):
     print("\n========== QWEN WEB EXTRACTION ==========")
 
     for index, (field_name, field_data) in enumerate(
-        filtered_evidence.items(), start=1
+        filtered_evidence.items(),
+        start=1
     ):
 
         section = field_data.get("section", "")
-
-        description = field_data.get("description", "")
 
         evidence_chunks = field_data.get("evidence", [])
 
@@ -340,7 +444,43 @@ def extract_from_web(filtered_evidence):
             f"Extracting: {field_name}"
         )
 
+        print("Section:", section)
+
         print("Relevant chunks:", len(evidence_chunks))
+
+        # ----------------------------------------------------
+        # GET SHARED FIELD DEFINITION
+        # ----------------------------------------------------
+
+        definition = get_field_definition(
+            section=section,
+            field_name=field_name
+        )
+
+        if definition is None:
+
+            print("Status: field_definition_not_found")
+
+            web_results[field_name] = {
+                "section": section,
+                "answer": None,
+                "evidence": None,
+                "source_url": None,
+                "status": "field_definition_not_found"
+            }
+
+            continue
+
+        description = definition.get("description", "")
+
+        extraction_instruction = definition.get(
+            "extract",
+            ""
+        )
+
+        # ----------------------------------------------------
+        # CALL QWEN
+        # ----------------------------------------------------
 
         try:
 
@@ -348,6 +488,7 @@ def extract_from_web(filtered_evidence):
                 field_name=field_name,
                 section=section,
                 description=description,
+                extraction_instruction=extraction_instruction,
                 evidence_chunks=evidence_chunks
             )
 
@@ -360,9 +501,11 @@ def extract_from_web(filtered_evidence):
         }
 
         print("Status:", result["status"])
+
         print("Answer:", result["answer"])
 
         if result.get("source_url"):
+
             print("Source:", result["source_url"])
 
     return web_results
