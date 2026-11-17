@@ -1,5 +1,4 @@
- 
-import copy
+
 import json
 import re
 import requests
@@ -14,7 +13,6 @@ from llm.ollama_client import MODEL_NAME
 # ============================================================
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-
 REQUEST_TIMEOUT = 300
 
 
@@ -24,10 +22,10 @@ REQUEST_TIMEOUT = 300
 
 def get_clean_field_definitions():
     """
-    Return field definitions without example values.
+    Get shared field definitions without example values.
 
-    Only descriptions and extraction instructions are
-    provided to Qwen.
+    The same definitions are used by the original
+    questionnaire extraction process.
     """
 
     definitions = get_field_definitions()
@@ -49,88 +47,27 @@ def get_clean_field_definitions():
 
 
 # ============================================================
-# RESPONSE SCHEMA WITH EVIDENCE
-# ============================================================
-
-def get_questionnaire_response_schema():
-    """
-    Extend the original Pydantic schema with an evidence object.
-
-    The original OnePagerExtraction schema remains unchanged.
-    """
-
-    schema = copy.deepcopy(
-        OnePagerExtraction.model_json_schema()
-    )
-
-    evidence_item_schema = {
-        "type": "object",
-        "properties": {
-            "evidence": {
-                "type": ["string", "null"]
-            }
-        },
-        "required": ["evidence"],
-        "additionalProperties": False
-    }
-
-    schema["properties"]["evidence"] = {
-        "type": "object",
-        "properties": {
-            "company": {
-                "type": "object",
-                "additionalProperties": evidence_item_schema
-            },
-            "product": {
-                "type": "object",
-                "additionalProperties": evidence_item_schema
-            }
-        },
-        "required": ["company", "product"],
-        "additionalProperties": False
-    }
-
-    schema["required"] = list(
-        dict.fromkeys(
-            schema.get("required", []) + ["evidence"]
-        )
-    )
-
-    return schema
-
-
-# ============================================================
 # TEXT NORMALIZATION
 # ============================================================
 
 def normalize_text(text):
     """
-    Normalize text for evidence comparison.
-
-    Handles:
-    - Uppercase/lowercase differences
-    - Multiple spaces
-    - Newlines
-    - Tabs
+    Normalize whitespace and case for evidence comparison.
     """
 
     if not isinstance(text, str):
         return ""
 
-    return re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip().lower()
+    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 # ============================================================
-# NORMALIZE NULL VALUES
+# NULL NORMALIZATION
 # ============================================================
 
 def normalize_null_values(data):
     """
-    Convert textual representations of null into Python None.
+    Convert textual null representations into Python None.
     """
 
     if isinstance(data, dict):
@@ -140,14 +77,14 @@ def normalize_null_values(data):
             for key, value in data.items()
         }
 
-    elif isinstance(data, list):
+    if isinstance(data, list):
 
         return [
             normalize_null_values(item)
             for item in data
         ]
 
-    elif isinstance(data, str):
+    if isinstance(data, str):
 
         if data.strip().lower() in [
             "null",
@@ -163,286 +100,104 @@ def normalize_null_values(data):
 
 
 # ============================================================
-# VERIFY QUESTIONNAIRE EVIDENCE
+# OLLAMA CHAT REQUEST
 # ============================================================
 
-def verify_questionnaire_evidence(
-    extracted_data,
-    evidence_data,
-    questionnaire_text
-):
+def call_ollama(messages, response_format):
     """
-    Verify evidence against the original questionnaire.
-
-    IMPORTANT:
-    An answer is NOT deleted when evidence verification fails.
-
-    Verification statuses:
-
-        verified:
-            Evidence quotation exists in questionnaire.
-
-        needs_review:
-            Answer exists, but evidence could not be verified.
-
-        missing:
-            Qwen returned no answer.
-
-        user_input:
-            Value was supplied directly by the user.
+    Common Ollama API request function.
     """
 
-    verified_evidence = {
-        "company": {},
-        "product": {}
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "format": response_format,
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0,
+            "num_ctx": 8192,
+            "num_predict": 4096
+        }
     }
 
-    normalized_questionnaire = normalize_text(
-        questionnaire_text
+    response = requests.post(
+        OLLAMA_URL,
+        json=payload,
+        timeout=REQUEST_TIMEOUT
     )
 
-    for section in ["company", "product"]:
+    response.raise_for_status()
 
-        section_data = extracted_data.get(section, {})
+    response_data = response.json()
 
-        section_evidence = evidence_data.get(section, {})
+    raw_output = response_data.get(
+        "message", {}
+    ).get("content", "")
 
-        for field_name, answer in section_data.items():
+    if not raw_output or not raw_output.strip():
 
-            field_evidence = section_evidence.get(
-                field_name,
-                {}
-            )
+        raise ValueError(
+            "Ollama returned empty content."
+        )
 
-            quotation = field_evidence.get("evidence")
-
-            # ------------------------------------------------
-            # USER-PROVIDED COMPANY AND PRODUCT NAMES
-            # ------------------------------------------------
-
-            if (
-                (section == "company" and field_name == "company_name")
-                or
-                (section == "product" and field_name == "product_name")
-            ):
-
-                verified_evidence[section][field_name] = {
-                    "evidence": None,
-                    "source": "user_input",
-                    "verification_status": "user_input"
-                }
-
-                continue
-
-            # ------------------------------------------------
-            # MISSING ANSWER
-            # ------------------------------------------------
-
-            if answer is None:
-
-                verified_evidence[section][field_name] = {
-                    "evidence": None,
-                    "source": None,
-                    "verification_status": "missing"
-                }
-
-                continue
-
-            # ------------------------------------------------
-            # MISSING EVIDENCE
-            # ------------------------------------------------
-
-            if (
-                not isinstance(quotation, str)
-                or not quotation.strip()
-            ):
-
-                verified_evidence[section][field_name] = {
-                    "evidence": None,
-                    "source": "questionnaire",
-                    "verification_status": "needs_review"
-                }
-
-                continue
-
-            normalized_quotation = normalize_text(
-                quotation
-            )
-
-            # ------------------------------------------------
-            # CHECK EVIDENCE
-            # ------------------------------------------------
-
-            if normalized_quotation in normalized_questionnaire:
-
-                verification_status = "verified"
-
-            else:
-
-                verification_status = "needs_review"
-
-            # ------------------------------------------------
-            # PRESERVE ANSWER
-            # ------------------------------------------------
-
-            verified_evidence[section][field_name] = {
-                "evidence": quotation.strip(),
-                "source": "questionnaire",
-                "verification_status": verification_status
-            }
-
-    return extracted_data, verified_evidence
+    return raw_output
 
 
 # ============================================================
-# PRINT EXTRACTION SUMMARY
+# STEP 1: ORIGINAL QUESTIONNAIRE EXTRACTION
 # ============================================================
 
-def print_extraction_summary(extracted_data, verified_evidence):
-    """
-    Display extracted answers and their verification status.
-    """
-
-    print("\n========== QUESTIONNAIRE EXTRACTION SUMMARY ==========")
-
-    for section in ["company", "product"]:
-
-        print(f"\n{section.upper()} FIELDS")
-
-        for field_name, answer in extracted_data[section].items():
-
-            evidence_info = verified_evidence[section].get(
-                field_name,
-                {}
-            )
-
-            status = evidence_info.get(
-                "verification_status",
-                "unknown"
-            )
-
-            print(f"\nField: {field_name}")
-            print(f"Answer: {answer}")
-            print(f"Status: {status}")
-
-
-# ============================================================
-# QUESTIONNAIRE EXTRACTION
-# ============================================================
-
-def extract_from_questionnaire(
-    questionnaire_text: str,
-    company_name: str,
-    product_name: str,
-    return_evidence: bool = False
+def extract_questionnaire_answers(
+    questionnaire_text,
+    company_name,
+    product_name
 ):
     """
-    Extract company and product information exclusively
-    from the supplied questionnaire.
+    Extract company and product information from the
+    questionnaire using the original Pydantic schema.
 
-    Extraction flow:
-
-        1. Read questionnaire.
-        2. Load shared field definitions.
-        3. Ask Qwen to extract answers and evidence.
-        4. Verify evidence against questionnaire text.
-        5. Preserve answers even when evidence needs review.
-        6. Validate answers using Pydantic.
-
-    By default, returns the original Pydantic model.
-
-    When return_evidence=True, returns:
-
-        (extracted_data, verified_evidence)
+    This step does NOT include evidence extraction.
     """
-
-    # --------------------------------------------------------
-    # VALIDATE INPUT
-    # --------------------------------------------------------
-
-    if (
-        not questionnaire_text
-        or not questionnaire_text.strip()
-    ):
-
-        raise ValueError(
-            "Questionnaire text is empty."
-        )
-
-    if not company_name or not company_name.strip():
-
-        raise ValueError(
-            "Company name is required."
-        )
-
-    if not product_name or not product_name.strip():
-
-        raise ValueError(
-            "Product name is required."
-        )
-
-    # --------------------------------------------------------
-    # GET FIELD DEFINITIONS WITHOUT EXAMPLES
-    # --------------------------------------------------------
 
     field_definitions = get_clean_field_definitions()
 
-    schema = get_questionnaire_response_schema()
-
-    # --------------------------------------------------------
-    # SYSTEM PROMPT
-    # --------------------------------------------------------
+    schema = OnePagerExtraction.model_json_schema()
 
     system_prompt = """
 You are a factual information extraction system.
 
-Your task is to extract company and product information
-ONLY from the supplied questionnaire.
-
-Use the supplied one-pager field definitions to understand
-what information is required for each field.
+Extract company and product information ONLY from
+the supplied questionnaire.
 
 STRICT RULES:
 
 1. Use only the supplied questionnaire.
 2. Never use external knowledge or previously learned facts.
 3. Never invent or assume information.
-4. Return null when information is genuinely missing.
-5. Do not copy example values or invent sample answers.
-6. Do not confuse route_to_market with deployment_type.
-7. Do not confuse funding with revenue.
-8. Do not confuse partners with customers.
-9. Do not assign information about another company
+4. Return null when information is genuinely missing or unclear.
+5. Do not confuse route_to_market with deployment_type.
+6. Do not confuse funding with revenue.
+7. Do not confuse partners with customers.
+8. Do not assign information about another company
    to the user-entered company.
-10. Every non-null answer should have supporting
-    questionnaire evidence.
-11. Evidence should be copied from the original
-    questionnaire as accurately as possible.
-12. Keep evidence concise. Prefer one or two complete
-    sentences instead of copying long paragraphs.
-13. Never invent evidence or use external knowledge.
-14. If no relevant information exists in the questionnaire,
-    return null for that field.
-15. Preserve company and product names provided by the user.
-16. Return every required field.
-17. Return valid JSON matching the supplied schema.
+9. Follow the supplied field descriptions and extraction
+   instructions.
+10. Preserve the company and product names supplied by
+    the user.
+11. Return every required field.
+12. Return valid JSON matching the supplied schema.
 
 IMPORTANT:
 
 A field description explains what information is required.
-It is not itself evidence.
+It is not evidence.
 
-Only questionnaire content can support an extracted answer.
+Extract information based on its actual meaning in
+the questionnaire.
 
-Do not return null merely because information is expressed
-in a different wording from the field description.
-
-Extract the actual information when its meaning is clear.
+Do not use external knowledge.
 """
-
-    # --------------------------------------------------------
-    # USER PROMPT
-    # --------------------------------------------------------
 
     user_prompt = f"""
 USER-PROVIDED COMPANY NAME:
@@ -471,75 +226,40 @@ QUESTIONNAIRE CONTENT:
 
 YOUR TASK:
 
-Extract company and product information from the questionnaire.
+Extract all company and product information from
+the questionnaire.
 
 For every field:
 
-1. Read its description.
-2. Read its extraction instructions.
-3. Find relevant information in the questionnaire.
-4. Extract the answer when supported.
-5. Provide a concise supporting quotation.
-6. Return null only when the information is genuinely absent
-   or cannot be identified confidently.
+1. Understand the field description.
+2. Read the extraction instructions.
+3. Find the relevant information in the questionnaire.
+4. Extract the answer when information is available.
+5. Return null only when the information is genuinely
+   missing or unclear.
 
-IMPORTANT FIELD INTERPRETATION:
+IMPORTANT:
 
-- Company overview:
-  Extract the company's business, technology, purpose,
-  or main activities.
+- Funding and revenue are different fields.
+- Preserve monetary units and currencies.
+- Preserve employee ranges when available.
+- Do not confuse LinkedIn followers with employee count.
+- Do not confuse technical deployment with route to market.
+- Do not confuse customers with partners.
+- Do not assign information belonging to another company
+  to the requested company.
 
-- Funding:
-  Extract the funding amount and currency when available.
-
-- Revenue:
-  Extract the revenue amount and its unit/currency
-  when available.
-
-- Route to market:
-  Extract the commercial strategy used to sell or distribute
-  the product. Do not confuse this with deployment technology.
-
-- Deployment type:
-  Extract cloud, edge, on-premises, hybrid, or other
-  explicitly supported deployment environments.
-
-- Models:
-  Extract model architectures and model names.
-
-- Training hardware:
-  Extract hardware used for model training.
-
-- AI framework:
-  Extract frameworks used for AI model development
-  and training.
-
-EVIDENCE REQUIREMENTS:
-
-For every field, return an evidence object containing
-an evidence property.
-
-Evidence must be copied from the questionnaire.
-Do not use field descriptions as evidence.
-
-If an answer is null, its evidence must also be null.
-
-EXPECTED JSON STRUCTURE:
-
-- company: all company fields
-- product: all product fields
-- evidence: company and product evidence sections
-
+Return all fields using the supplied JSON schema.
 Return JSON only.
 """
 
-    # --------------------------------------------------------
-    # OLLAMA REQUEST
-    # --------------------------------------------------------
+    print("\n========== STEP 1: QUESTIONNAIRE ANSWER EXTRACTION ==========")
 
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
+    print("Connecting to Ollama...")
+    print("Model:", MODEL_NAME)
+
+    raw_output = call_ollama(
+        messages=[
             {
                 "role": "system",
                 "content": system_prompt
@@ -549,72 +269,12 @@ Return JSON only.
                 "content": user_prompt
             }
         ],
-        "format": schema,
-        "stream": False,
-        "think": False,
-        "options": {
-            "temperature": 0,
-            "num_ctx": 8192,
-            "num_predict": 4096
-        }
-    }
-
-    print("\nConnecting to Ollama...")
-    print("Model:", MODEL_NAME)
-    print("API:", OLLAMA_URL)
-
-    # --------------------------------------------------------
-    # SEND REQUEST
-    # --------------------------------------------------------
-
-    try:
-
-        response = requests.post(
-            OLLAMA_URL,
-            json=payload,
-            timeout=REQUEST_TIMEOUT
-        )
-
-        response.raise_for_status()
-
-    except requests.exceptions.RequestException as error:
-
-        raise RuntimeError(
-            f"Could not communicate with Ollama: {error}"
-        ) from error
-
-    response_data = response.json()
-
-    # --------------------------------------------------------
-    # READ MODEL RESPONSE
-    # --------------------------------------------------------
-
-    print("\n========== OLLAMA RESPONSE DETAILS ==========")
-
-    print(
-        "Done reason:",
-        response_data.get("done_reason")
+        response_format=schema
     )
-
-    message = response_data.get("message", {})
-
-    raw_output = message.get("content", "")
-
-    if not raw_output or not raw_output.strip():
-
-        print("Ollama returned empty message content.")
-
-        raise ValueError(
-            "Ollama returned empty content."
-        )
 
     print("\n========== RAW QUESTIONNAIRE EXTRACTION ==========")
 
     print(raw_output)
-
-    # --------------------------------------------------------
-    # PARSE JSON RESPONSE
-    # --------------------------------------------------------
 
     try:
 
@@ -622,55 +282,345 @@ Return JSON only.
 
         parsed_data = normalize_null_values(parsed_data)
 
-        evidence_data = parsed_data.pop(
-            "evidence",
-            {}
-        )
-
-        # ----------------------------------------------------
-        # VERIFY EVIDENCE
-        # ----------------------------------------------------
-
-        parsed_data, verified_evidence = (
-            verify_questionnaire_evidence(
-                extracted_data=parsed_data,
-                evidence_data=evidence_data,
-                questionnaire_text=questionnaire_text
-            )
-        )
-
-        # ----------------------------------------------------
-        # VALIDATE USING PYDANTIC
-        # ----------------------------------------------------
-
         extracted_data = OnePagerExtraction.model_validate(
             parsed_data
         )
 
     except Exception as error:
 
-        print("\nQuestionnaire extraction validation failed.")
+        print("\nQuestionnaire answer extraction failed.")
 
-        print(
-            "Raw model response:",
-            repr(raw_output)
-        )
+        print("Raw response:", repr(raw_output))
 
         raise error
 
-    # --------------------------------------------------------
-    # APPLY USER-PROVIDED NAMES
-    # --------------------------------------------------------
-
+    # User-provided names are authoritative.
     extracted_data.company.company_name = company_name
-
     extracted_data.product.product_name = product_name
 
-    # --------------------------------------------------------
-    # PRINT VERIFIED EVIDENCE
-    # --------------------------------------------------------
+    print("\nOriginal questionnaire extraction successful.")
 
-    print("\n========== QUESTIONNAIRE EVIDENCE ==========")
+    return extracted_data
+
+
+# ============================================================
+# STEP 2: BUILD SEPARATE EVIDENCE RESPONSE SCHEMA
+# ============================================================
+
+def get_evidence_response_schema():
+    """
+    Build a schema for evidence extraction only.
+
+    This schema is completely separate from the
+    original OnePagerExtraction schema.
+    """
+
+    definitions = get_field_definitions()
+
+    evidence_item_schema = {
+        "type": "object",
+        "properties": {
+            "evidence": {
+                "type": ["string", "null"]
+            }
+        },
+        "required": ["evidence"],
+        "additionalProperties": False
+    }
+
+    evidence_properties = {}
+
+    for section, fields in definitions.items():
+
+        evidence_properties[section] = {
+            "type": "object",
+            "properties": {
+                field_name: evidence_item_schema
+                for field_name in fields.keys()
+            },
+            "required": list(fields.keys()),
+            "additionalProperties": False
+        }
+
+    return {
+        "type": "object",
+        "properties": evidence_properties,
+        "required": list(evidence_properties.keys()),
+        "additionalProperties": False
+    }
+
+
+# ============================================================
+# STEP 3: EXTRACT SOURCE EVIDENCE SEPARATELY
+# ============================================================
+
+def extract_questionnaire_evidence(
+    extracted_data,
+    questionnaire_text
+):
+    """
+    Find the original questionnaire passage supporting
+    each already-extracted answer.
+
+    This function must never modify extracted_data.
+    """
+
+    answer_data = extracted_data.model_dump()
+
+    evidence_schema = get_evidence_response_schema()
+
+    system_prompt = """
+You are a questionnaire evidence identification system.
+
+Your task is ONLY to locate supporting passages
+for already-extracted answers.
+
+You must NOT extract new answers.
+You must NOT modify existing answers.
+You must NOT use external knowledge.
+
+STRICT RULES:
+
+1. Use only the supplied questionnaire.
+2. Read the provided answer for each field.
+3. Locate the passage that supports that answer.
+4. Copy the relevant passage from the questionnaire.
+5. Do not invent or paraphrase evidence.
+6. Prefer concise, complete sentences.
+7. If the answer is null, return null evidence.
+8. If supporting information cannot be located,
+   return null evidence.
+9. Do not use information from another company.
+10. Return every required evidence field.
+11. Return valid JSON matching the supplied schema.
+
+IMPORTANT:
+
+Your task is evidence identification, not answer extraction.
+
+Never change, correct, replace, or reinterpret
+the supplied answers.
+"""
+
+    user_prompt = f"""
+EXTRACTED COMPANY AND PRODUCT ANSWERS:
+
+{json.dumps(
+    answer_data,
+    indent=2,
+    ensure_ascii=False
+)}
+
+
+ORIGINAL QUESTIONNAIRE:
+
+{questionnaire_text}
+
+
+YOUR TASK:
+
+For every non-null answer, locate the supporting
+text in the original questionnaire.
+
+Return the shortest complete passage that clearly
+supports the answer.
+
+For example:
+
+Answer:
+"400K USD"
+
+Questionnaire passage:
+"Company Revenue and Funding
+Revenue: 5.2M
+Funding: Yes. 400K USD"
+
+Evidence:
+"Funding: Yes. 400K USD"
+
+If an answer is null, its evidence must be null.
+
+Do not generate or change any answers.
+
+Return only the evidence JSON.
+"""
+
+    print("\n========== STEP 2: SOURCE EVIDENCE EXTRACTION ==========")
+
+    try:
+
+        raw_output = call_ollama(
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            response_format=evidence_schema
+        )
+
+        print("\n========== RAW EVIDENCE EXTRACTION ==========")
+
+        print(raw_output)
+
+        evidence_data = json.loads(raw_output)
+
+        evidence_data = normalize_null_values(evidence_data)
+
+        return evidence_data
+
+    except Exception as error:
+
+        print("\nEvidence extraction failed:", error)
+
+        print(
+            "Original extracted answers will be preserved."
+        )
+
+        return {
+            section: {
+                field_name: {
+                    "evidence": None
+                }
+                for field_name in fields
+            }
+            for section, fields in get_field_definitions().items()
+        }
+
+
+# ============================================================
+# STEP 4: CHECK EVIDENCE WITHOUT CHANGING ANSWERS
+# ============================================================
+
+def verify_questionnaire_evidence(
+    extracted_data,
+    evidence_data,
+    questionnaire_text
+):
+    """
+    Check whether the evidence quotation exists
+    in the original questionnaire.
+
+    IMPORTANT:
+    This function only verifies evidence.
+    It never changes extracted answers.
+    """
+
+    verified_evidence = {
+        "company": {},
+        "product": {}
+    }
+
+    normalized_questionnaire = normalize_text(
+        questionnaire_text
+    )
+
+    answer_data = extracted_data.model_dump()
+
+    for section in ["company", "product"]:
+
+        for field_name, answer in answer_data[section].items():
+
+            field_evidence = evidence_data.get(
+                section, {}
+            ).get(
+                field_name, {}
+            )
+
+            quotation = field_evidence.get("evidence")
+
+            # User-provided names
+            if (
+                (section == "company" and field_name == "company_name")
+                or
+                (section == "product" and field_name == "product_name")
+            ):
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": "user_input",
+                    "verification_status": "user_input"
+                }
+
+                continue
+
+            # No answer was extracted
+            if answer is None:
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": None,
+                    "verification_status": "missing"
+                }
+
+                continue
+
+            # Evidence not returned
+            if (
+                not isinstance(quotation, str)
+                or not quotation.strip()
+            ):
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": "questionnaire",
+                    "verification_status": "evidence_not_found"
+                }
+
+                continue
+
+            normalized_quotation = normalize_text(
+                quotation
+            )
+
+            # Exact normalized text comparison
+            if normalized_quotation in normalized_questionnaire:
+
+                status = "verified"
+
+            else:
+
+                status = "needs_review"
+
+            verified_evidence[section][field_name] = {
+                "evidence": quotation.strip(),
+                "source": "questionnaire",
+                "verification_status": status
+            }
+
+    # Return the original Pydantic object unchanged.
+    return extracted_data, verified_evidence
+
+
+# ============================================================
+# PRINT EXTRACTION SUMMARY
+# ============================================================
+
+def print_extraction_summary(
+    extracted_data,
+    verified_evidence
+):
+    """
+    Display answers and their corresponding source evidence.
+    """
+
+    answer_data = extracted_data.model_dump()
+
+    print("\n========== FINAL QUESTIONNAIRE ANSWERS ==========")
+
+    print(
+        json.dumps(
+            answer_data,
+            indent=4,
+            ensure_ascii=False
+        )
+    )
+
+    print("\n========== QUESTIONNAIRE SOURCE EVIDENCE ==========")
 
     print(
         json.dumps(
@@ -680,13 +630,92 @@ Return JSON only.
         )
     )
 
+
+# ============================================================
+# MAIN QUESTIONNAIRE EXTRACTION FUNCTION
+# ============================================================
+
+def extract_from_questionnaire(
+    questionnaire_text: str,
+    company_name: str,
+    product_name: str,
+    return_evidence: bool = False
+):
+    """
+    Main questionnaire extraction function.
+
+    Step 1:
+        Extract answers using the original Pydantic schema.
+
+    Step 2:
+        Extract source evidence in a separate LLM request.
+
+    Step 3:
+        Verify evidence without modifying answers.
+
+    Default return:
+        OnePagerExtraction object.
+
+    When return_evidence=True:
+        Returns (extracted_data, verified_evidence).
+    """
+
+    if not questionnaire_text or not questionnaire_text.strip():
+
+        raise ValueError(
+            "Questionnaire text is empty."
+        )
+
+    if not company_name or not company_name.strip():
+
+        raise ValueError(
+            "Company name is required."
+        )
+
+    if not product_name or not product_name.strip():
+
+        raise ValueError(
+            "Product name is required."
+        )
+
     # --------------------------------------------------------
-    # PRINT EXTRACTION SUMMARY
+    # STEP 1: ORIGINAL ANSWER EXTRACTION
+    # --------------------------------------------------------
+
+    extracted_data = extract_questionnaire_answers(
+        questionnaire_text=questionnaire_text,
+        company_name=company_name,
+        product_name=product_name
+    )
+
+    # --------------------------------------------------------
+    # STEP 2: SEPARATE EVIDENCE EXTRACTION
+    # --------------------------------------------------------
+
+    evidence_data = extract_questionnaire_evidence(
+        extracted_data=extracted_data,
+        questionnaire_text=questionnaire_text
+    )
+
+    # --------------------------------------------------------
+    # STEP 3: VERIFY EVIDENCE ONLY
+    # --------------------------------------------------------
+
+    extracted_data, verified_evidence = (
+        verify_questionnaire_evidence(
+            extracted_data=extracted_data,
+            evidence_data=evidence_data,
+            questionnaire_text=questionnaire_text
+        )
+    )
+
+    # --------------------------------------------------------
+    # DISPLAY RESULTS
     # --------------------------------------------------------
 
     print_extraction_summary(
-        extracted_data.model_dump(),
-        verified_evidence
+        extracted_data=extracted_data,
+        verified_evidence=verified_evidence
     )
 
     # --------------------------------------------------------
