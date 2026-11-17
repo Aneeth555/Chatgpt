@@ -1,5 +1,6 @@
-
+ 
 import json
+import re
 import requests
 
 from schemas.one_pager_schema import OnePagerExtraction
@@ -16,12 +17,17 @@ REQUEST_TIMEOUT = 300
 # ============================================================
 
 def get_extraction_definitions():
-
     """
-    Send only descriptions and extraction instructions
-    to Qwen.
+    Prepare complete field definitions for Qwen.
 
-    Example values are intentionally excluded.
+    Includes:
+    - Description
+    - What to extract
+    - What not to extract
+    - Answer format
+    - Source guidance
+
+    Examples are intentionally excluded.
     """
 
     definitions = get_field_definitions()
@@ -36,7 +42,10 @@ def get_extraction_definitions():
 
             clean_definitions[section][field_name] = {
                 "description": definition.get("description", ""),
-                "extract": definition.get("extract", "")
+                "what_to_extract": definition.get("what_to_extract", ""),
+                "what_not_to_extract": definition.get("what_not_to_extract", ""),
+                "answer_format": definition.get("answer_format", ""),
+                "source_guidance": definition.get("source_guidance", "")
             }
 
     return clean_definitions
@@ -156,28 +165,35 @@ STRICT RULES:
 3. Never invent or assume information.
 4. Return null only when the information is genuinely
    unavailable or cannot be identified.
-5. Understand the field descriptions and extraction
-   instructions before answering.
+5. Understand all five properties of each field definition
+   before extracting its answer.
 6. Do not confuse similar fields.
 7. Do not assign information belonging to another company
    to the requested company.
 8. Preserve the original meaning of the questionnaire.
-9. Preserve numerical values, units and currencies.
+9. Preserve numerical values, units and currencies exactly.
 10. Include every required field.
 11. Follow the supplied JSON schema exactly.
 12. Return valid JSON only.
 
 IMPORTANT ABOUT FIELD DEFINITIONS:
 
-Field descriptions explain what information is required.
+Description explains what information is required.
 
-Extraction instructions explain how to identify that
-information.
+What_to_extract explains which information should be identified.
 
-Neither descriptions nor instructions are source data.
+What_not_to_extract explains which information must be excluded.
 
-Never use sample answers, previously learned company
-information, or hypothetical values as actual answers.
+Answer_format explains how the answer should be presented.
+
+Source_guidance identifies the preferred source types.
+Since this task uses a questionnaire, extract only information
+actually supported by the questionnaire.
+
+These definitions are instructions, NOT source data.
+
+Never use hypothetical values or previously learned
+company information as actual answers.
 
 Extract actual values from the questionnaire.
 """
@@ -215,10 +231,14 @@ provided field definitions.
 For each field:
 
 1. Understand what the field represents.
-2. Search the questionnaire for relevant information.
-3. Identify the correct information.
-4. Extract the actual answer.
-5. Return null if the information is not available.
+2. Read all five properties in its definition.
+3. Search the questionnaire for relevant information.
+4. Identify the correct information.
+5. Check that the information does not belong to
+   another field or another company.
+6. Return the answer in the specified answer format.
+7. Return null if the information is not supported
+   by the questionnaire.
 
 IMPORTANT FIELD DISTINCTIONS:
 
@@ -255,12 +275,13 @@ PRODUCT INFORMATION:
 
 SPECIAL INSTRUCTIONS:
 
-1. If the questionnaire says "Funding: 400K USD",
-   extract "400K USD". Do not replace it with another
-   amount.
+1. Preserve numerical values, units and currencies.
+   For example, if the questionnaire contains a funding
+   amount with a currency, retain the complete amount.
 
-2. If the questionnaire says "Revenue: 5.2M",
-   extract "5.2M". Do not return only "5.2".
+2. Preserve revenue suffixes and scale indicators.
+   Do not remove M, K, B, million, billion, or currency
+   information from the original answer.
 
 3. A technology partnership does not automatically
    establish a commercial sales channel.
@@ -273,6 +294,19 @@ SPECIAL INSTRUCTIONS:
 
 6. Do not fill a field merely because a similar value
    appears in another field.
+
+7. Do not assume that a company operating in AI is
+   automatically a competitor of another AI company.
+
+8. A company address is not automatically its headquarters.
+   Only identify headquarters when the questionnaire
+   supports that classification.
+
+9. Do not convert an employee range into an exact
+   employee count.
+
+10. Do not treat a LinkedIn profile count as the company's
+    declared employee count.
 
 Return the complete JSON object matching the schema.
 """
@@ -293,7 +327,8 @@ Return the complete JSON object matching the schema.
                 "content": user_prompt
             }
         ],
-        response_format=schema
+        response_format=schema,
+        num_predict=4096
     )
 
     print("\n========== RAW QUESTIONNAIRE EXTRACTION ==========")
