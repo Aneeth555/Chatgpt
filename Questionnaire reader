@@ -1,0 +1,211 @@
+
+from pathlib import Path
+from io import BytesIO
+
+from pypdf import PdfReader
+from docx import Document
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+
+# ============================================================
+# PDF EXTRACTION
+# ============================================================
+
+def extract_pdf(file_bytes):
+    """Extract text from a PDF questionnaire."""
+
+    reader = PdfReader(BytesIO(file_bytes))
+
+    pages = []
+
+    for page_number, page in enumerate(reader.pages, start=1):
+
+        text = page.extract_text() or ""
+
+        pages.append(
+            f"\n--- Page {page_number} ---\n{text}"
+        )
+
+    return "\n".join(pages)
+
+
+# ============================================================
+# DOCX EXTRACTION
+# ============================================================
+
+def extract_docx(file_bytes):
+    """Extract paragraphs and tables from a DOCX questionnaire."""
+
+    document = Document(BytesIO(file_bytes))
+
+    content = []
+
+    for paragraph in document.paragraphs:
+
+        if paragraph.text.strip():
+            content.append(paragraph.text.strip())
+
+    for table_number, table in enumerate(document.tables, start=1):
+
+        content.append(f"\n--- Table {table_number} ---")
+
+        for row in table.rows:
+
+            row_data = [
+                cell.text.strip().replace("\n", " ")
+                for cell in row.cells
+            ]
+
+            content.append(" | ".join(row_data))
+
+    return "\n".join(content)
+
+
+# ============================================================
+# POWERPOINT SHAPE EXTRACTION
+# ============================================================
+
+def extract_shape_text(shape, content):
+    """
+    Extract text recursively from PowerPoint shapes.
+
+    Supports:
+    - Normal text boxes
+    - Tables
+    - Grouped shapes
+    """
+
+    # Normal text boxes
+    if shape.has_text_frame:
+
+        text = shape.text.strip()
+
+        if text:
+            content.append(text)
+
+    # Tables
+    if shape.has_table:
+
+        for row in shape.table.rows:
+
+            row_data = [
+                cell.text.strip().replace("\n", " ")
+                for cell in row.cells
+            ]
+
+            content.append(" | ".join(row_data))
+
+    # Grouped shapes
+    if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+
+        for grouped_shape in shape.shapes:
+
+            extract_shape_text(
+                grouped_shape,
+                content
+            )
+
+
+# ============================================================
+# PPTX EXTRACTION
+# ============================================================
+
+def extract_pptx(file_bytes):
+    """Extract text and tables from a PPTX questionnaire."""
+
+    presentation = Presentation(BytesIO(file_bytes))
+
+    content = []
+
+    for slide_number, slide in enumerate(
+        presentation.slides,
+        start=1
+    ):
+
+        content.append(
+            f"\n--- Slide {slide_number} ---"
+        )
+
+        for shape in slide.shapes:
+
+            extract_shape_text(
+                shape,
+                content
+            )
+
+        # Speaker notes, when available
+        try:
+
+            if slide.has_notes_slide:
+
+                notes_text = (
+                    slide.notes_slide.notes_text_frame.text.strip()
+                )
+
+                if notes_text:
+                    content.append(
+                        f"\nSpeaker Notes:\n{notes_text}"
+                    )
+
+        except Exception:
+            pass
+
+    return "\n".join(content)
+
+
+# ============================================================
+# MAIN QUESTIONNAIRE READER
+# ============================================================
+
+def read_questionnaire(uploaded_file):
+    """
+    Identify the uploaded document format and extract its text.
+
+    Supports PDF, DOCX and PPTX.
+    """
+
+    file_name = uploaded_file.name
+
+    extension = Path(file_name).suffix.lower()
+
+    # Streamlit UploadedFile or standard file object
+    if hasattr(uploaded_file, "getvalue"):
+
+        file_bytes = uploaded_file.getvalue()
+
+    else:
+
+        file_bytes = uploaded_file.read()
+
+    if extension == ".pdf":
+
+        extracted_text = extract_pdf(file_bytes)
+
+    elif extension == ".docx":
+
+        extracted_text = extract_docx(file_bytes)
+
+    elif extension == ".pptx":
+
+        extracted_text = extract_pptx(file_bytes)
+
+    else:
+
+        raise ValueError(
+            "Unsupported file format. "
+            "Please upload PDF, DOCX or PPTX."
+        )
+
+    if not extracted_text.strip():
+
+        raise ValueError(
+            "No readable text found in the questionnaire. "
+            "It may be a scanned document."
+        )
+
+    return {
+        "file_name": file_name,
+        "file_type": extension,
+        "extracted_text": extracted_text
+    }
