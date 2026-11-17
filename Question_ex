@@ -1,5 +1,7 @@
  
+import copy
 import json
+import re
 import requests
 
 from schemas.one_pager_schema import OnePagerExtraction
@@ -7,54 +9,399 @@ from schemas.field_definitions import get_field_definitions
 from llm.ollama_client import MODEL_NAME
 
 
+# ============================================================
+# OLLAMA CONFIGURATION
+# ============================================================
+
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
+REQUEST_TIMEOUT = 300
+
+
+# ============================================================
+# FIELD DEFINITIONS
+# ============================================================
+
+def get_clean_field_definitions():
+    """
+    Return field definitions without example values.
+
+    Examples are intentionally excluded to prevent Qwen
+    from copying sample values into actual answers.
+    """
+
+    definitions = get_field_definitions()
+
+    clean_definitions = {}
+
+    for section, fields in definitions.items():
+
+        clean_definitions[section] = {}
+
+        for field_name, definition in fields.items():
+
+            clean_definitions[section][field_name] = {
+                "description": definition.get("description", ""),
+                "extract": definition.get("extract", "")
+            }
+
+    return clean_definitions
+
+
+# ============================================================
+# RESPONSE SCHEMA WITH EVIDENCE
+# ============================================================
+
+def get_questionnaire_response_schema():
+    """
+    Extend the existing OnePagerExtraction schema
+    with a separate evidence object.
+
+    The original company/product schema remains unchanged.
+    """
+
+    schema = copy.deepcopy(
+        OnePagerExtraction.model_json_schema()
+    )
+
+    evidence_item_schema = {
+        "type": "object",
+        "properties": {
+            "evidence": {
+                "type": ["string", "null"]
+            }
+        },
+        "required": ["evidence"],
+        "additionalProperties": False
+    }
+
+    schema["properties"]["evidence"] = {
+        "type": "object",
+        "properties": {
+            "company": {
+                "type": "object",
+                "additionalProperties": evidence_item_schema
+            },
+            "product": {
+                "type": "object",
+                "additionalProperties": evidence_item_schema
+            }
+        },
+        "required": ["company", "product"],
+        "additionalProperties": False
+    }
+
+    schema["required"] = list(
+        dict.fromkeys(
+            schema.get("required", []) + ["evidence"]
+        )
+    )
+
+    return schema
+
+
+# ============================================================
+# TEXT NORMALIZATION
+# ============================================================
+
+def normalize_text(text):
+    """
+    Normalize whitespace for evidence comparison.
+    """
+
+    if not isinstance(text, str):
+        return ""
+
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+# ============================================================
+# NORMALIZE NULL VALUES
+# ============================================================
+
+def normalize_null_values(data):
+    """
+    Convert textual representations of null into None.
+    """
+
+    if isinstance(data, dict):
+
+        return {
+            key: normalize_null_values(value)
+            for key, value in data.items()
+        }
+
+    elif isinstance(data, list):
+
+        return [
+            normalize_null_values(item)
+            for item in data
+        ]
+
+    elif isinstance(data, str):
+
+        if data.strip().lower() in [
+            "null",
+            "none",
+            "n/a",
+            "not available",
+            "not specified",
+            "unknown"
+        ]:
+            return None
+
+    return data
+
+
+# ============================================================
+# VERIFY QUESTIONNAIRE EVIDENCE
+# ============================================================
+
+def verify_questionnaire_evidence(
+    extracted_data,
+    evidence_data,
+    questionnaire_text
+):
+    """
+    Verify that every non-null answer has supporting
+    text present in the original questionnaire.
+
+    Unsupported answers are changed to None.
+    """
+
+    verified_evidence = {
+        "company": {},
+        "product": {}
+    }
+
+    normalized_questionnaire = normalize_text(
+        questionnaire_text
+    )
+
+    for section in ["company", "product"]:
+
+        section_data = extracted_data.get(section, {})
+
+        section_evidence = evidence_data.get(section, {})
+
+        for field_name, answer in section_data.items():
+
+            field_evidence = section_evidence.get(
+                field_name,
+                {}
+            )
+
+            quotation = field_evidence.get("evidence")
+
+            # User-provided company/product names are
+            # authoritative inputs, not questionnaire facts.
+            if (
+                section == "company"
+                and field_name == "company_name"
+            ):
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": "user_input"
+                }
+                continue
+
+            if (
+                section == "product"
+                and field_name == "product_name"
+            ):
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": "user_input"
+                }
+                continue
+
+            # Missing answer
+            if answer is None:
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": None
+                }
+                continue
+
+            # Answer must have supporting evidence
+            if not isinstance(quotation, str) or not quotation.strip():
+
+                extracted_data[section][field_name] = None
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": None
+                }
+
+                continue
+
+            normalized_quotation = normalize_text(
+                quotation
+            )
+
+            # Evidence must exist in the original questionnaire
+            if normalized_quotation not in normalized_questionnaire:
+
+                extracted_data[section][field_name] = None
+
+                verified_evidence[section][field_name] = {
+                    "evidence": None,
+                    "source": None
+                }
+
+                continue
+
+            # Evidence successfully verified
+            verified_evidence[section][field_name] = {
+                "evidence": quotation.strip(),
+                "source": "questionnaire"
+            }
+
+    return extracted_data, verified_evidence
+
+
+# ============================================================
+# QUESTIONNAIRE EXTRACTION
+# ============================================================
 
 def extract_from_questionnaire(
     questionnaire_text: str,
     company_name: str,
-    product_name: str
+    product_name: str,
+    return_evidence: bool = False
 ):
-    if not questionnaire_text or not questionnaire_text.strip():
-        raise ValueError("Questionnaire text is empty.")
+    """
+    Extract company and product information exclusively
+    from questionnaire content.
 
-    field_definitions = get_field_definitions()
-    schema = OnePagerExtraction.model_json_schema()
+    Evidence is verified independently in Python.
+
+    By default, returns the original Pydantic model.
+    Set return_evidence=True to receive the model and
+    its evidence/provenance information.
+    """
+
+    if not questionnaire_text or not questionnaire_text.strip():
+
+        raise ValueError(
+            "Questionnaire text is empty."
+        )
+
+    # --------------------------------------------------------
+    # GET FIELD DEFINITIONS WITHOUT EXAMPLES
+    # --------------------------------------------------------
+
+    field_definitions = get_clean_field_definitions()
+
+    schema = get_questionnaire_response_schema()
+
+    # --------------------------------------------------------
+    # SYSTEM PROMPT
+    # --------------------------------------------------------
 
     system_prompt = """
-You are an information extraction system.
+You are a factual information extraction system.
 
 Extract company and product information ONLY from
 the supplied questionnaire.
 
+You must fill the required one-pager fields using
+the supplied field descriptions and extraction instructions.
+
 STRICT RULES:
-1. Do not use external knowledge.
-2. Do not invent or assume information.
-3. Use null when information is missing or unclear.
-4. Do not confuse route_to_market with deployment_type.
-5. Do not confuse funding with revenue.
-6. Do not confuse partners with customers.
-7. Follow the supplied JSON schema exactly.
-8. Include every required field.
-9. Return valid JSON only.
+
+1. Use only the supplied questionnaire.
+2. Never use external knowledge or previously learned facts.
+3. Never invent or assume information.
+4. Return null when information is missing or unclear.
+5. Do not copy example values or invent sample answers.
+6. Do not confuse route_to_market with deployment_type.
+7. Do not confuse funding with revenue.
+8. Do not confuse partners with customers.
+9. Do not assign information about another company
+   to the user-entered company.
+10. Every non-null answer must have supporting
+    questionnaire evidence.
+11. Evidence must be an exact quotation from the questionnaire.
+12. Do not create or paraphrase evidence.
+13. If you cannot identify supporting evidence,
+    return null for that field.
+14. The company name and product name are provided
+    by the user and must be preserved.
+15. Return every required field.
+16. Return valid JSON matching the supplied schema.
+
+IMPORTANT:
+
+A field description explains what information is required.
+It is not itself evidence.
+
+Only questionnaire content can support an extracted answer.
 """
 
+    # --------------------------------------------------------
+    # USER PROMPT
+    # --------------------------------------------------------
+
     user_prompt = f"""
-COMPANY NAME:
+USER-PROVIDED COMPANY NAME:
 {company_name}
 
-PRODUCT NAME:
+USER-PROVIDED PRODUCT NAME:
 {product_name}
 
 FIELD DEFINITIONS:
-{json.dumps(field_definitions, indent=2)}
+{json.dumps(field_definitions, indent=2, ensure_ascii=False)}
 
-QUESTIONNAIRE:
+QUESTIONNAIRE CONTENT:
 {questionnaire_text}
 
-Extract the information into the required JSON structure.
-Use null for unsupported fields.
+YOUR TASK:
+
+Extract the company and product information from the
+questionnaire.
+
+For each field:
+
+1. Read its description and extraction instructions.
+2. Find relevant information in the questionnaire.
+3. Extract the answer only when supported.
+4. Provide an exact supporting quotation.
+5. Return null for both answer and evidence when
+   the questionnaire does not contain the information.
+
+EVIDENCE STRUCTURE:
+
+The JSON response must contain:
+
+- company: the extracted company fields
+- product: the extracted product fields
+- evidence: supporting quotations for each field
+
+The evidence object must have company and product sections.
+Each field must have an evidence property.
+
+For example, if the questionnaire contains:
+
+"Our headquarters are located in London, UK."
+
+The company headquarters answer should be:
+
+"London, UK"
+
+Its evidence should be:
+
+"Our headquarters are located in London, UK."
+
+Do not use field descriptions as evidence.
+Do not use example values as answers.
+Do not use information from outside the questionnaire.
 """
+
+    # --------------------------------------------------------
+    # OLLAMA REQUEST
+    # --------------------------------------------------------
 
     payload = {
         "model": MODEL_NAME,
@@ -73,7 +420,8 @@ Use null for unsupported fields.
         "think": False,
         "options": {
             "temperature": 0,
-            "num_predict": 2048
+            "num_ctx": 8192,
+            "num_predict": 4096
         }
     }
 
@@ -82,104 +430,113 @@ Use null for unsupported fields.
     print("API:", OLLAMA_URL)
 
     try:
+
         response = requests.post(
             OLLAMA_URL,
             json=payload,
-            timeout=300
+            timeout=REQUEST_TIMEOUT
         )
 
         response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
+
         raise RuntimeError(
             f"Could not communicate with Ollama: {error}"
         ) from error
 
     response_data = response.json()
 
-    # Debug: inspect the Ollama response
+    # --------------------------------------------------------
+    # READ MODEL RESPONSE
+    # --------------------------------------------------------
+
     print("\n========== OLLAMA RESPONSE DETAILS ==========")
-    print("Response keys:", list(response_data.keys()))
-    print("Done reason:", response_data.get("done_reason"))
+
+    print(
+        "Done reason:",
+        response_data.get("done_reason")
+    )
 
     message = response_data.get("message", {})
 
-    print("Message keys:", list(message.keys()))
-
     raw_output = message.get("content", "")
 
-    # Check for empty output before Pydantic validation
     if not raw_output or not raw_output.strip():
 
-        thinking_output = message.get("thinking", "")
-
-        print("\nOllama returned empty message content.")
-
-        if thinking_output:
-            print("Thinking content was returned.")
-            print(thinking_output[:1000])
-
-        print("\nComplete response for debugging:")
-        print(json.dumps(response_data, indent=2))
+        print("Ollama returned empty message content.")
 
         raise ValueError(
-            "Ollama returned empty content. "
-            "Check the response details printed above."
+            "Ollama returned empty content."
         )
 
     print("\n========== RAW QUESTIONNAIRE EXTRACTION ==========")
+
     print(raw_output)
 
-    # Validate JSON using Pydantic
+    # --------------------------------------------------------
+    # PARSE AND NORMALIZE RESPONSE
+    # --------------------------------------------------------
+
     try:
-         # Parse the JSON response
-parsed_data = json.loads(raw_output)
 
+        parsed_data = json.loads(raw_output)
 
-# Convert text representations of missing values into None
-def normalize_null_values(data):
+        parsed_data = normalize_null_values(parsed_data)
 
-    if isinstance(data, dict):
-        return {
-            key: normalize_null_values(value)
-            for key, value in data.items()
-        }
+        evidence_data = parsed_data.pop("evidence", {})
 
-    elif isinstance(data, list):
-        return [
-            normalize_null_values(item)
-            for item in data
-        ]
+        # ----------------------------------------------------
+        # VERIFY ANSWERS AGAINST QUESTIONNAIRE
+        # ----------------------------------------------------
 
-    elif isinstance(data, str):
-        if data.strip().lower() in [
-            "null",
-            "none",
-            "n/a",
-            "not available",
-            "not specified",
-            "unknown"
-        ]:
-            return None
+        parsed_data, verified_evidence = (
+            verify_questionnaire_evidence(
+                extracted_data=parsed_data,
+                evidence_data=evidence_data,
+                questionnaire_text=questionnaire_text
+            )
+        )
 
-    return data
+        # ----------------------------------------------------
+        # VALIDATE USING EXISTING PYDANTIC SCHEMA
+        # ----------------------------------------------------
 
-
-parsed_data = normalize_null_values(parsed_data)
-
-
-# Validate normalized data using Pydantic
-extracted_data = OnePagerExtraction.model_validate(
-    parsed_data
-)
+        extracted_data = OnePagerExtraction.model_validate(
+            parsed_data
+        )
 
     except Exception as error:
-        print("\nPydantic validation failed.")
-        print("Raw model response:", repr(raw_output))
+
+        print("\nQuestionnaire extraction validation failed.")
+
+        print(
+            "Raw model response:",
+            repr(raw_output)
+        )
+
         raise error
 
-    # User-provided names are authoritative
+    # --------------------------------------------------------
+    # APPLY USER-PROVIDED NAMES
+    # --------------------------------------------------------
+
     extracted_data.company.company_name = company_name
+
     extracted_data.product.product_name = product_name
+
+    print("\n========== VERIFIED QUESTIONNAIRE EVIDENCE ==========")
+
+    print(
+        json.dumps(
+            verified_evidence,
+            indent=4,
+            ensure_ascii=False
+        )
+    )
+
+    if return_evidence:
+
+        return extracted_data, verified_evidence
 
     return extracted_data
