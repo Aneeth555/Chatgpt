@@ -1,527 +1,242 @@
 
-# schemas/field_definitions.py
-
-"""
-Shared field definitions for questionnaire and web extraction.
-No company-specific example answers are provided.
-"""
+# ============================================================
+# ONE-PAGER FIELD DEFINITIONS
+# ============================================================
 
 FIELD_DEFINITIONS = {
 
-    # ============================================================
+    # ========================================================
     # COMPANY INFORMATION
-    # ============================================================
+    # ========================================================
 
     "company": {
 
         "company_name": {
-            "description": "The official name of the company.",
-            "what_to_extract": (
-                "Extract the official business name of the company "
-                "identified by the user."
-            ),
-            "what_not_to_extract": (
-                "Do not extract product names, brand names, subsidiary "
-                "names, or partner company names."
-            ),
-            "answer_format": "Return only the company name.",
-            "source_guidance": (
-                "Prefer the official company website, official documents, "
-                "and verified company profiles."
-            )
+            "display_name": "Company Name",
+            "description": "The official name of the company being profiled.",
+            "what_to_extract": "The company's official and complete name.",
+            "what_not_to_extract": "Product names, brand names or names of partner companies unless they are also the actual company name.",
+            "answer_format": "Company name only.",
+            "source_guidance": "Prefer the official company website and explicit company identification in the questionnaire."
         },
 
         "overview": {
-            "description": (
-                "A concise summary of the company's business, primary "
-                "activities, technology, and value proposition."
-            ),
-            "what_to_extract": (
-                "Identify what the company does, its main business "
-                "activities, the problems it solves, and its value "
-                "proposition."
-            ),
-            "what_not_to_extract": (
-                "Do not provide only product names, customer lists, "
-                "funding details, technical specifications, or generic "
-                "marketing statements."
-            ),
-            "answer_format": (
-                "Write a concise paragraph of approximately 2-4 sentences."
-            ),
-            "source_guidance": (
-                "Prefer the official About Us page, company profile, "
-                "official presentations, and company documentation."
-            )
+            "display_name": "Company Overview",
+            "description": "A concise overview of what the company does, its business, purpose, technology, products and core capabilities.",
+            "what_to_extract": "The company's main business activities, problems it solves, technology, products, services and important capabilities. Combine relevant information from different parts of the questionnaire when necessary.",
+            "what_not_to_extract": "An unrelated product-only description, unsupported claims, marketing slogans or speculative future capabilities.",
+            "answer_format": "A concise paragraph describing the company's business and core activities.",
+            "source_guidance": "Use the official company description and relevant questionnaire information."
         },
 
         "headquarters": {
-            "description": (
-                "The company's primary headquarters or main corporate "
-                "office location."
-            ),
-            "what_to_extract": (
-                "Extract the address explicitly identified as the "
-                "company's headquarters, head office, or main corporate "
-                "office."
-            ),
-            "what_not_to_extract": (
-                "Do not automatically treat a registered office, branch "
-                "office, operational office, employee location, mailing "
-                "address, or third-party office listing as headquarters. "
-                "Do not select an address merely because it is the only "
-                "address found."
-            ),
-            "answer_format": (
-                "Return the available headquarters address, including "
-                "city, state, and country where available."
-            ),
-            "source_guidance": (
-                "Prefer the official company website and official "
-                "company documents. Use reliable secondary sources "
-                "only when the office type is clearly identified."
-            )
+            "display_name": "HQ",
+            "description": "The actual headquarters location of the company.",
+            "what_to_extract": "The city, state, region or country explicitly identified as the company's headquarters or primary headquarters.",
+            "what_not_to_extract": "Registered office, branch office, regional office, mailing address, customer address or an address whose relationship to the company's headquarters is unclear.",
+            "answer_format": "Location in a concise format, preserving the available city, state and country information.",
+            "source_guidance": "Prefer an explicit headquarters statement from the official company website or questionnaire."
         },
 
         "employee_count": {
-            "description": (
-                "The approximate number or declared employee-size "
-                "range of the company."
-            ),
-            "what_to_extract": (
-                "Extract an explicitly stated total employee count "
-                "or company-size range belonging to the target company."
-            ),
-            "what_not_to_extract": (
-                "Do not extract LinkedIn profile counts, numbers in "
-                "'View all employees' links, followers, job openings, "
-                "website visitors, or employee counts belonging to "
-                "another company. A number of associated LinkedIn "
-                "profiles is not necessarily the company's total "
-                "employee count."
-            ),
-            "answer_format": (
-                "Preserve the original number or range and its meaning. "
-                "Do not convert a company-size range into an exact count."
-            ),
-            "source_guidance": (
-                "Prefer official company information and the company-size "
-                "information on its verified LinkedIn company profile. "
-                "Secondary sources may be used when clearly attributed."
-            )
+            "display_name": "Employees",
+            "description": "The total number or range of employees working for the company.",
+            "what_to_extract": "An explicitly stated company-wide employee count or employee-size range. Preserve the original range and any associated units.",
+            "what_not_to_extract": "Number of LinkedIn profiles displayed, followers, team members listed on a webpage, job openings or employee counts belonging to another organization.",
+            "answer_format": "Preserve the explicitly stated employee number or range.",
+            "source_guidance": "Use explicit company-size statements, employee counts or reliable company profile information. Do not infer the count from unrelated people listings."
         },
 
         "funding": {
-            "description": (
-                "The external capital or financial investment raised "
-                "by the company."
-            ),
-            "what_to_extract": (
-                "Extract explicitly stated funding amounts and currency. "
-                "Include funding round details only when available."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse revenue, company valuation, profit, "
-                "projected income, or investment announcements involving "
-                "another company with funding raised by the target company."
-            ),
-            "answer_format": (
-                "Return the stated monetary amount and currency. "
-                "Do not invent missing amounts or funding rounds."
-            ),
-            "source_guidance": (
-                "Prefer official funding announcements, investor "
-                "announcements, company disclosures, and reliable "
-                "financial publications."
-            )
-        },
-
-        "revenue": {
-            "description": (
-                "The income generated by the company through its "
-                "business activities."
-            ),
-            "what_to_extract": (
-                "Extract explicitly stated company revenue, including "
-                "amount, currency, scale, and reporting period when "
-                "available."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse revenue with funding, valuation, profit, "
-                "investment, market size, or projected revenue."
-            ),
-            "answer_format": (
-                "Preserve the original amount, scale, currency, and "
-                "reporting period when provided. Do not invent a period."
-            ),
-            "source_guidance": (
-                "Prefer official financial statements, company disclosures, "
-                "regulatory filings, and reliable financial publications."
-            )
-        },
-
-        "gtm_partners": {
-            "description": (
-                "Organizations that help the company sell, distribute, "
-                "market, implement, or commercially deliver its products."
-            ),
-            "what_to_extract": (
-                "Identify explicitly stated sales partners, resellers, "
-                "distributors, channel partners, implementation partners, "
-                "and commercial alliances."
-            ),
-            "what_not_to_extract": (
-                "Do not treat customers, investors, suppliers, technology "
-                "integrations, research collaborators, or hardware "
-                "optimization partners as GTM partners unless a commercial "
-                "go-to-market relationship is established."
-            ),
-            "answer_format": (
-                "Return partner names and briefly describe their "
-                "commercial role when supported by evidence."
-            ),
-            "source_guidance": (
-                "Prefer official partnership announcements, partner "
-                "directories, company announcements, and documented "
-                "commercial agreements."
-            )
-        },
-
-        "key_customers": {
-            "description": (
-                "Organizations that actually purchase, use, or have "
-                "adopted the company's products or services."
-            ),
-            "what_to_extract": (
-                "Extract named organizations explicitly identified "
-                "as customers, clients, product adopters, or users."
-            ),
-            "what_not_to_extract": (
-                "Do not extract investors, technology partners, suppliers, "
-                "competitors, event participants, or organizations merely "
-                "mentioned in articles."
-            ),
-            "answer_format": (
-                "Return confirmed customer organization names. Include "
-                "their relationship with the company only when supported."
-            ),
-            "source_guidance": (
-                "Prefer official customer case studies, testimonials, "
-                "customer announcements, and documented deployments."
-            )
-        },
-
-        "competitors": {
-            "description": (
-                "Companies offering competing products or services "
-                "in the same or overlapping market."
-            ),
-            "what_to_extract": (
-                "Extract companies explicitly identified as competitors "
-                "or supported by clear evidence of direct product or "
-                "market competition."
-            ),
-            "what_not_to_extract": (
-                "Do not treat companies as competitors merely because "
-                "they operate in AI, technology, healthcare, or the same "
-                "broad industry. Do not return URLs, search suggestions, "
-                "customers, or partners as competitors."
-            ),
-            "answer_format": (
-                "Return company names only, optionally followed by "
-                "a short explanation of their competitive relationship."
-            ),
-            "source_guidance": (
-                "Prefer credible industry analysis, competitor comparisons, "
-                "market research, and reliable business publications."
-            )
+            "display_name": "Funding",
+            "description": "The funding or investment capital raised by the company.",
+            "what_to_extract": "Explicitly disclosed funding amounts, investment rounds, grants or total capital raised. Preserve currency, amount and funding stage when available.",
+            "what_not_to_extract": "Company revenue, valuation, projected revenue, investment targets, funding requirements or unconfirmed investment discussions.",
+            "answer_format": "Concise funding amount and currency, with funding round or stage when available.",
+            "source_guidance": "Prefer explicit company disclosures, official announcements and credible funding reports."
         }
     },
     
-    # ============================================================
+    # ========================================================
+    # REMAINING COMPANY FIELDS
+    # ========================================================
+
+    "company": {
+
+        "revenue": {
+            "display_name": "Revenue",
+            "description": "The company's actual reported or explicitly disclosed business revenue.",
+            "what_to_extract": "Explicit revenue figures, annual revenue, recurring revenue or other clearly identified revenue metrics. Preserve the amount, currency and reporting period.",
+            "what_not_to_extract": "Funding, investment, valuation, profit, market size, transaction volume, projected revenue or customer spending unless explicitly identified as company revenue.",
+            "answer_format": "Preserve the original amount, currency, unit and reporting period.",
+            "source_guidance": "Prefer explicit financial disclosures, company statements and credible financial reporting."
+        },
+
+        "gtm_partners": {
+            "display_name": "GTM Partners",
+            "description": "Organizations that help the company commercialize, market, sell or distribute its products and services.",
+            "what_to_extract": "Sales partners, distribution partners, reseller partners, channel partners and commercial go-to-market alliances.",
+            "what_not_to_extract": "Technical integration partners, cloud infrastructure providers, research collaborators, investors or customers unless they are explicitly identified as commercial go-to-market partners.",
+            "answer_format": "Partner organization names, optionally with their commercial relationship.",
+            "source_guidance": "Require an explicit or clearly supported commercial relationship."
+        },
+
+        "key_customers": {
+            "display_name": "Key Customers",
+            "description": "Important organizations that purchase, use or are explicitly identified as customers of the company or its products.",
+            "what_to_extract": "Named customers, enterprise clients, organizations using the product and publicly disclosed customer relationships.",
+            "what_not_to_extract": "Partners, investors, suppliers, technology providers, research collaborators or potential customers unless they are explicitly identified as customers.",
+            "answer_format": "Customer organization names, optionally with a brief description of their relationship.",
+            "source_guidance": "Prefer explicit customer announcements, case studies and company disclosures."
+        },
+
+        "competitors": {
+            "display_name": "Main Competitors",
+            "description": "Companies offering competing products or solutions that address similar customer needs or markets.",
+            "what_to_extract": "Direct competitors offering comparable products, services or technology solutions.",
+            "what_not_to_extract": "Every company in the same industry, general technology providers, partners, suppliers or customers without a competitive relationship.",
+            "answer_format": "Names of relevant competing companies.",
+            "source_guidance": "Prefer explicit competitor identification or reliable comparisons demonstrating overlapping products and target markets."
+        }
+    },
+
+    # ========================================================
     # PRODUCT INFORMATION
-    # ============================================================
+    # ========================================================
 
     "product": {
 
         "product_name": {
-            "description": "The official name of the company's product.",
-            "what_to_extract": (
-                "Identify the specific product or platform belonging "
-                "to the given company."
-            ),
-            "what_not_to_extract": (
-                "Do not return the company name, partner name, technology "
-                "name, or unrelated product."
-            ),
-            "answer_format": "Return only the official product name.",
-            "source_guidance": (
-                "Prefer the official product website, product "
-                "documentation, and company materials."
-            )
+            "display_name": "Product Name",
+            "description": "The name of the specific product being profiled.",
+            "what_to_extract": "The official name of the product or solution provided as input or identified in the questionnaire.",
+            "what_not_to_extract": "Company names, unrelated product names or generic technology names.",
+            "answer_format": "Product name only.",
+            "source_guidance": "Treat the explicitly supplied product name as authoritative unless the user corrects it."
         },
 
         "description": {
-            "description": (
-                "A description of what the product does, how it works "
-                "at a high level, and the problem it solves."
-            ),
-            "what_to_extract": (
-                "Identify the product's purpose, main capabilities, "
-                "functionality, and value to its intended users."
-            ),
-            "what_not_to_extract": (
-                "Do not provide only the company overview, technical "
-                "framework lists, hardware specifications, or unsupported "
-                "marketing claims."
-            ),
-            "answer_format": (
-                "Write a concise paragraph of approximately 2-4 sentences."
-            ),
-            "source_guidance": (
-                "Prefer official product pages, product documentation, "
-                "technical documentation, and company presentations."
-            )
+            "display_name": "Product Description",
+            "description": "A description of the product's purpose, functionality, capabilities, technology and intended use cases.",
+            "what_to_extract": "What the product does, the problem it solves, its main functionality, important features and intended applications. Combine relevant details from different questionnaire sections.",
+            "what_not_to_extract": "The entire company overview, unrelated company activities, unsupported capabilities or future features presented as already implemented.",
+            "answer_format": "A concise paragraph explaining the product and its main capabilities.",
+            "source_guidance": "Use product-specific questionnaire answers and official product documentation."
         },
 
         "vertical_market": {
-            "description": (
-                "The industries, sectors, or market segments the "
-                "product is designed to serve."
-            ),
-            "what_to_extract": (
-                "Identify the industries or business domains where "
-                "the product is intended to be used."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse technical capabilities, programming "
-                "technologies, customer names, or general use cases "
-                "with the target industry."
-            ),
-            "answer_format": (
-                "Return a concise list of relevant industries "
-                "or market segments."
-            ),
-            "source_guidance": (
-                "Prefer official product descriptions, use cases, "
-                "customer deployments, and industry-specific documentation."
-            )
+            "display_name": "Vertical Market",
+            "description": "The industries, business sectors or application markets that the product serves or targets.",
+            "what_to_extract": "Explicitly stated target industries, sectors and application domains. Relevant use cases may help identify a market when the questionnaire does not use the exact term vertical market.",
+            "what_not_to_extract": "Programming languages, technology categories, deployment environments, customer names or broad industries that are not supported by the information.",
+            "answer_format": "Concise industry or market-sector names.",
+            "source_guidance": "Use explicit target-market statements and clearly supported product applications. Do not overstate the markets served."
         },
 
         "route_to_market": {
-            "description": (
-                "The commercial strategy through which the company "
-                "sells, distributes, or delivers the product to customers."
-            ),
-            "what_to_extract": (
-                "Identify direct sales, enterprise sales, subscription "
-                "SaaS, resellers, distributors, channel partners, "
-                "marketplaces, OEM arrangements, or other explicitly "
-                "stated commercial channels."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse route-to-market with cloud, edge, or "
-                "on-premises deployment. Do not automatically treat "
-                "technology integrations, research partnerships, hardware "
-                "optimization, or technical collaborations as commercial "
-                "distribution channels."
-            ),
-            "answer_format": (
-                "Provide a concise description of the commercial sales "
-                "or distribution approach."
-            ),
-            "source_guidance": (
-                "Prefer official sales information, pricing pages, "
-                "partner programs, reseller agreements, marketplace "
-                "listings, and commercial announcements."
-            )
-        },
+            "display_name": "Route to Market",
+            "description": "The commercial strategy or channel through which the product is offered and reaches customers.",
+            "what_to_extract": "Direct sales, indirect sales, channel partnerships, resellers, distributors, marketplaces, subscriptions or other explicitly stated commercial models.",
+            "what_not_to_extract": "Cloud deployment, edge deployment, on-premises installation, technical architecture, infrastructure providers or development partnerships unless they also describe a commercial distribution channel.",
+            "answer_format": "Concise description of the commercial sales or distribution model.",
+            "source_guidance": "Require explicit information about how the product is sold, distributed, licensed or commercialized."
+        }
+    },
+    
+    # ========================================================
+    # REMAINING PRODUCT FIELDS
+    # ========================================================
+
+    "product": {
 
         "inference_hardware": {
-            "description": (
-                "The hardware used to run trained AI models and "
-                "perform inference."
-            ),
-            "what_to_extract": (
-                "Identify processors, GPUs, accelerators, servers, "
-                "or cloud hardware instances explicitly used for "
-                "model inference."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse inference hardware with hardware used "
-                "only for model training or general company infrastructure."
-            ),
-            "answer_format": (
-                "Return hardware names, processor or accelerator types, "
-                "and cloud instance types when available."
-            ),
-            "source_guidance": (
-                "Prefer official technical documentation, deployment "
-                "architecture, engineering blogs, and product announcements."
-            )
+            "display_name": "Current Inference Hardware",
+            "description": "The hardware currently used to execute trained AI models and perform inference.",
+            "what_to_extract": "Currently used CPUs, GPUs, AI accelerators, servers and cloud compute instance types associated with model inference or production model execution.",
+            "what_not_to_extract": "Hardware used only for model training, future inference hardware targets, general hardware recommendations or hardware not associated with inference.",
+            "answer_format": "Concise description preserving processor names, accelerator names, instance types and specifications.",
+            "source_guidance": "Prioritize explicit statements about the current inference or production environment. Distinguish currently deployed hardware from planned optimization targets."
         },
 
         "deployment_type": {
-            "description": (
-                "The environment or infrastructure in which the product "
-                "or AI solution is deployed."
-            ),
-            "what_to_extract": (
-                "Identify whether the product supports cloud, on-premises, "
-                "edge, hybrid, or other explicitly stated deployment "
-                "environments."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse deployment type with sales strategy, "
-                "hardware type, model training environment, or "
-                "software framework."
-            ),
-            "answer_format": (
-                "Return supported deployment types and relevant details."
-            ),
-            "source_guidance": (
-                "Prefer official deployment documentation, architecture "
-                "documentation, and product technical specifications."
-            )
+            "display_name": "Deployment Type",
+            "description": "The environment and deployment model through which the product is made available or operated.",
+            "what_to_extract": "Cloud, on-premises, edge, mobile, desktop, hybrid or other explicitly described deployment environments. Include primary deployment and supported alternatives.",
+            "what_not_to_extract": "Training hardware, inference hardware, operating systems, programming languages or cloud providers unless they provide evidence of a deployment model.",
+            "answer_format": "Concise deployment model, including primary and optional deployment environments when stated.",
+            "source_guidance": "Distinguish the current deployment model from optional, supported or future deployment arrangements."
         },
 
         "training_hardware": {
-            "description": (
-                "The hardware used to train or fine-tune the product's "
-                "AI or machine learning models."
-            ),
-            "what_to_extract": (
-                "Identify GPUs, CPUs, AI accelerators, servers, and "
-                "cloud instances explicitly associated with model "
-                "training or fine-tuning."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse inference hardware with training hardware. "
-                "Do not assume that hardware used for deployment is "
-                "also used for training."
-            ),
-            "answer_format": (
-                "Return hardware and cloud instance names with their "
-                "training purpose when available."
-            ),
-            "source_guidance": (
-                "Prefer technical papers, engineering blogs, training "
-                "architecture documentation, and official announcements."
-            )
+            "display_name": "Current Training Hardware",
+            "description": "The hardware currently used to train or fine-tune the product's AI models.",
+            "what_to_extract": "Currently used CPUs, GPUs, accelerators, training servers and cloud GPU instance types explicitly associated with model training or fine-tuning.",
+            "what_not_to_extract": "Inference-only hardware, general deployment hardware, future training infrastructure or hardware mentioned without a training relationship.",
+            "answer_format": "Concise description preserving GPU, CPU, accelerator and instance names and specifications.",
+            "source_guidance": "Prioritize explicit model-training infrastructure. Distinguish current training hardware from planned hardware."
         },
 
         "models": {
-            "description": (
-                "The AI, machine learning, or deep learning models "
-                "used or developed by the product."
-            ),
-            "what_to_extract": (
-                "Identify model architectures, pretrained models, "
-                "foundation models, custom models, and model families "
-                "explicitly associated with the product."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse model names with programming frameworks, "
-                "serving runtimes, hardware, or general AI concepts."
-            ),
-            "answer_format": (
-                "Return model names and relevant architecture details."
-            ),
-            "source_guidance": (
-                "Prefer technical documentation, research papers, "
-                "model cards, engineering publications, and official "
-                "product materials."
-            )
+            "display_name": "Models",
+            "description": "The AI models, model families and model architectures used by the product.",
+            "what_to_extract": "Named pretrained models, foundation models, language models, computer vision models, model architectures, neural network types and relevant model variants.",
+            "what_not_to_extract": "AI development frameworks, programming languages, databases, serving runtimes or general software tools unless they are themselves model names.",
+            "answer_format": "Model names and architectures, with relevant versions or specifications when available.",
+            "source_guidance": "Preserve exact model names, architecture names, versions and explicitly stated implementation details."
         },
 
         "ai_framework": {
-            "description": (
-                "Frameworks and libraries used to develop, train, "
-                "or fine-tune AI and machine learning models."
-            ),
-            "what_to_extract": (
-                "Identify model development and training frameworks "
-                "such as PyTorch, TensorFlow, Keras, Hugging Face "
-                "Transformers, and PEFT when explicitly used."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse model development frameworks with "
-                "inference engines, serving runtimes, databases, "
-                "cloud platforms, or hardware."
-            ),
-            "answer_format": "Return framework and library names.",
-            "source_guidance": (
-                "Prefer technical documentation, source code repositories, "
-                "engineering blogs, and official technical publications."
-            )
+            "display_name": "Current AI Framework",
+            "description": "The AI and machine learning frameworks currently used to develop, train or fine-tune the product's models.",
+            "what_to_extract": "Currently used AI development and training frameworks, machine learning libraries and model fine-tuning frameworks.",
+            "what_not_to_extract": "Model names, hardware, databases, programming languages or inference runtimes unless they are explicitly being used as AI development or training frameworks.",
+            "answer_format": "Framework and library names, preserving versions when available.",
+            "source_guidance": "Prioritize explicitly identified frameworks currently used for model development, training or fine-tuning."
         },
 
         "serving_framework": {
-            "description": (
-                "Frameworks, runtimes, or engines used to serve, deploy, "
-                "or optimize trained AI models for inference."
-            ),
-            "what_to_extract": (
-                "Identify inference serving and optimization technologies "
-                "such as vLLM, TensorRT, Triton, ONNX Runtime, OpenVINO, "
-                "and TorchServe when explicitly associated with serving."
-            ),
-            "what_not_to_extract": (
-                "Do not confuse model training frameworks, programming "
-                "languages, hardware, or general deployment platforms "
-                "with serving frameworks."
-            ),
-            "answer_format": (
-                "Return serving and inference optimization framework names."
-            ),
-            "source_guidance": (
-                "Prefer official deployment documentation, engineering "
-                "blogs, architecture diagrams, and technical repositories."
-            )
+            "display_name": "Current Serving Framework",
+            "description": "The frameworks and runtimes currently used to deploy, serve, execute or optimize trained AI models for inference.",
+            "what_to_extract": "Currently used model-serving frameworks, inference runtimes, model execution engines and inference optimization software.",
+            "what_not_to_extract": "Training-only frameworks, model names, hardware, general-purpose cloud services or future serving targets presented as current implementations.",
+            "answer_format": "Framework and runtime names. Clearly distinguish current implementations from planned or target tools.",
+            "source_guidance": "Preserve implementation status. If a framework is described as a future target, do not present it as currently deployed."
         },
 
         "additional_ai_software_stack": {
-            "description": (
-                "Other software infrastructure and supporting technologies "
-                "used in the product's AI ecosystem."
-            ),
-            "what_to_extract": (
-                "Identify supporting technologies such as databases, "
-                "vector databases, graph databases, message queues, "
-                "data pipelines, MLOps platforms, monitoring systems, "
-                "and orchestration tools."
-            ),
-            "what_not_to_extract": (
-                "Do not repeat model names, training frameworks, serving "
-                "frameworks, hardware, or unrelated general-purpose software."
-            ),
-            "answer_format": (
-                "Return technology names, grouped or described by their "
-                "role when available."
-            ),
-            "source_guidance": (
-                "Prefer official technical documentation, architecture "
-                "diagrams, engineering blogs, and technical repositories."
-            )
+            "display_name": "Additional AI Software Stack",
+            "description": "Supporting AI, data and software technologies used alongside the main AI models and frameworks.",
+            "what_to_extract": "Databases, vector databases, graph databases, data streaming platforms, message queues, data pipelines, MLOps tools, experiment tracking, model registries, CI/CD, orchestration, monitoring and observability technologies.",
+            "what_not_to_extract": "Unnamed products invented from general categories, unrelated business software, hardware, model names or tools already better classified as the main AI framework or serving framework.",
+            "answer_format": "Concise list of technology and tool names, optionally grouped by their purpose.",
+            "source_guidance": "Preserve explicitly stated product and technology names. Generic categories may be included only when the questionnaire explicitly mentions those categories."
         }
     }
-    
+}
+
+
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
 def get_field_definitions():
-    """Return all company and product field definitions."""
+    """
+    Return all company and product field definitions.
+    """
     return FIELD_DEFINITIONS
 
 
 def get_section_definitions(section_name):
-    """Return definitions for a specific section."""
+    """
+    Return definitions belonging to a specific section.
+    """
     return FIELD_DEFINITIONS.get(section_name, {})
 
 
 def get_all_field_names():
-    """Return all available field names."""
+    """
+    Return all internal schema field names.
+    """
     field_names = []
 
     for section in FIELD_DEFINITIONS.values():
@@ -531,9 +246,11 @@ def get_all_field_names():
 
 
 def get_field_definition(field_name):
-    """Return the definition of a particular field."""
-
+    """
+    Find a field definition using its internal schema name.
+    """
     for section in FIELD_DEFINITIONS.values():
+
         if field_name in section:
             return section[field_name]
 
@@ -541,9 +258,11 @@ def get_field_definition(field_name):
 
 
 def get_field_section(field_name):
-    """Return the section to which a field belongs."""
-
+    """
+    Return the section containing a field.
+    """
     for section_name, section in FIELD_DEFINITIONS.items():
+
         if field_name in section:
             return section_name
 
