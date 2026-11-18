@@ -1,5 +1,4 @@
- 
-import json
+ import json
 import re
 import requests
 
@@ -20,6 +19,9 @@ REQUEST_TIMEOUT = 300
 
 MAX_CHUNK_CHARACTERS = 2500
 
+NUM_CTX = 8192
+NUM_PREDICT = 512
+
 
 # ============================================================
 # LOAD SHARED FIELD DEFINITIONS
@@ -27,6 +29,10 @@ MAX_CHUNK_CHARACTERS = 2500
 
 FIELD_DEFINITIONS = get_field_definitions()
 
+
+# ============================================================
+# NORMALIZE FIELD NAME
+# ============================================================
 
 def normalize_field_name(name):
     """
@@ -41,10 +47,21 @@ def normalize_field_name(name):
     )
 
 
+# ============================================================
+# GET FIELD DEFINITION
+# ============================================================
+
 def get_field_definition(section, field_name):
     """
-    Retrieve the description and extraction instructions
-    from the shared field_definitions.py file.
+    Retrieve the complete shared definition of a field.
+
+    Returns all six properties:
+        display_name
+        description
+        what_to_extract
+        what_not_to_extract
+        answer_format
+        source_guidance
     """
 
     section_definitions = FIELD_DEFINITIONS.get(
@@ -57,7 +74,32 @@ def get_field_definition(section, field_name):
     for defined_name, definition in section_definitions.items():
 
         if normalize_field_name(defined_name) == normalized_name:
-            return definition
+
+            return {
+                "display_name": definition.get(
+                    "display_name", defined_name
+                ),
+
+                "description": definition.get(
+                    "description", ""
+                ),
+
+                "what_to_extract": definition.get(
+                    "what_to_extract", ""
+                ),
+
+                "what_not_to_extract": definition.get(
+                    "what_not_to_extract", ""
+                ),
+
+                "answer_format": definition.get(
+                    "answer_format", ""
+                ),
+
+                "source_guidance": definition.get(
+                    "source_guidance", ""
+                )
+            }
 
     return None
 
@@ -68,22 +110,29 @@ def get_field_definition(section, field_name):
 
 WEB_ANSWER_FORMAT = {
     "type": "object",
+
     "properties": {
+
         "answer": {
             "type": ["string", "null"]
         },
+
         "evidence": {
             "type": ["string", "null"]
         },
+
         "source_id": {
             "type": ["string", "null"]
         }
     },
+
     "required": [
         "answer",
         "evidence",
         "source_id"
-    ]
+    ],
+
+    "additionalProperties": False
 }
 
 
@@ -97,6 +146,7 @@ def prepare_field_evidence(evidence_chunks):
     """
 
     sources = []
+
     evidence_text = []
 
     for index, chunk in enumerate(evidence_chunks, start=1):
@@ -121,6 +171,7 @@ def prepare_field_evidence(evidence_chunks):
 [SOURCE {source_id}]
 Title: {source['title']}
 URL: {source['url']}
+Domain: {source['domain']}
 Content:
 {text}
 """
@@ -136,13 +187,12 @@ Content:
 def extract_single_field(
     field_name,
     section,
-    description,
-    extraction_instruction,
+    field_definition,
     evidence_chunks
 ):
     """
-    Extract one field using the shared field definition
-    and supplied webpage evidence.
+    Extract one field using all six shared field-definition
+    properties and supplied webpage evidence.
     """
 
     if not evidence_chunks:
@@ -164,6 +214,34 @@ def extract_single_field(
     }
 
     # --------------------------------------------------------
+    # GET ALL SIX FIELD-DEFINITION PROPERTIES
+    # --------------------------------------------------------
+
+    display_name = field_definition.get(
+        "display_name", field_name
+    )
+
+    description = field_definition.get(
+        "description", ""
+    )
+
+    what_to_extract = field_definition.get(
+        "what_to_extract", ""
+    )
+
+    what_not_to_extract = field_definition.get(
+        "what_not_to_extract", ""
+    )
+
+    answer_format = field_definition.get(
+        "answer_format", ""
+    )
+
+    source_guidance = field_definition.get(
+        "source_guidance", ""
+    )
+
+    # --------------------------------------------------------
     # SYSTEM PROMPT
     # --------------------------------------------------------
 
@@ -174,32 +252,49 @@ Your task is to extract information for a specific
 company or product field using ONLY the supplied
 webpage evidence.
 
-You will receive:
-- A field name
-- A field description
-- Field-specific extraction instructions
-- Relevant webpage evidence
-
-Understand the meaning of the field before extracting
-an answer.
+You must understand the meaning of the requested field
+before extracting an answer.
 
 STRICT RULES:
 
 1. Use only the supplied webpage evidence.
-2. Follow the field description and extraction instructions.
+
+2. Follow ALL six field-definition properties.
+
 3. Do not use outside knowledge or previously learned facts.
+
 4. Do not guess, assume or invent information.
+
 5. Do not confuse similar fields.
+
 6. Extract only information that answers the requested field.
+
 7. If evidence does not support an answer, return null.
+
 8. Preserve the original meaning and important details.
+
 9. Do not convert ranges into exact numerical values.
+
 10. Do not invent currencies, dates, units or specifications.
-11. Evidence must be an exact quotation or short excerpt
+
+11. Preserve technical names, model names and version numbers.
+
+12. Distinguish current implementations from planned
+    technologies and future targets.
+
+13. Follow the field's exclusions carefully.
+
+14. Evidence must be an exact quotation or short excerpt
     from the supplied webpage content.
-12. Select only one source that directly supports the answer.
-13. Never invent a source ID.
-14. Return valid JSON only.
+
+15. Select only one source that directly supports the answer.
+
+16. Never invent a source ID.
+
+17. Do not interpret navigation links, unrelated numbers,
+    page metadata or profile counts as factual answers.
+
+18. Return valid JSON only.
 
 IMPORTANT:
 
@@ -208,6 +303,10 @@ mean that it answers the requested field.
 
 Understand the context and relationship between the
 information and the requested field before extracting it.
+
+If multiple pieces of information support the same field,
+combine them only when they are relevant and supported
+by the selected source.
 """
 
     # --------------------------------------------------------
@@ -217,45 +316,86 @@ information and the requested field before extracting it.
     user_prompt = f"""
 Extract the requested one-pager field.
 
+============================================================
+FIELD INFORMATION
+============================================================
+
 SECTION:
 {section}
 
-FIELD NAME:
+INTERNAL FIELD NAME:
 {field_name}
 
-FIELD DESCRIPTION:
+DISPLAY NAME:
+{display_name}
+
+DESCRIPTION:
 {description}
 
-FIELD-SPECIFIC EXTRACTION INSTRUCTIONS:
-{extraction_instruction}
+WHAT TO EXTRACT:
+{what_to_extract}
 
-AVAILABLE SOURCE IDs:
+WHAT NOT TO EXTRACT:
+{what_not_to_extract}
+
+EXPECTED ANSWER FORMAT:
+{answer_format}
+
+SOURCE GUIDANCE:
+{source_guidance}
+
+============================================================
+AVAILABLE SOURCE IDs
+============================================================
+
 {", ".join(source_ids.keys())}
 
-WEBPAGE EVIDENCE:
+============================================================
+WEBPAGE EVIDENCE
+============================================================
+
 {evidence_text}
 
-Return the following JSON structure:
+============================================================
+EXTRACTION REQUIREMENTS
+============================================================
+
+1. Understand what this field represents.
+
+2. Follow the field definition and all its instructions.
+
+3. Examine the context surrounding relevant information.
+
+4. Do not select information merely because it contains
+   a similar keyword.
+
+5. Do not confuse company-level and product-level facts.
+
+6. Do not mistake navigation links, profile counts,
+   unrelated numbers or page metadata for factual answers.
+
+7. Preserve the original values and technical details.
+
+8. Follow the expected answer format.
+
+9. Use the smallest relevant exact evidence excerpt that
+   directly supports the answer.
+
+10. Select the correct source ID associated with the
+    supporting quotation.
+
+11. If no evidence supports the requested field,
+    return null for answer, evidence and source_id.
+
+Return this JSON structure:
 
 {{
-    "answer": "extracted answer or null",
-    "evidence": "supporting webpage text or null",
-    "source_id": "source ID or null"
+    "answer": null,
+    "evidence": null,
+    "source_id": null
 }}
 
-EXTRACTION REQUIREMENTS:
-
-- Understand what information this field represents.
-- Follow the field-specific extraction instructions.
-- Examine the context surrounding the relevant information.
-- Do not select information merely because it contains
-  a similar keyword.
-- Do not mistake navigation links, profile counts,
-  unrelated numbers or page metadata for factual answers.
-- Use the smallest relevant evidence excerpt that
-  directly supports the answer.
-- If no evidence supports the requested field,
-  return null for answer, evidence and source_id.
+Return valid JSON only.
 """
 
     # --------------------------------------------------------
@@ -263,7 +403,9 @@ EXTRACTION REQUIREMENTS:
     # --------------------------------------------------------
 
     payload = {
+
         "model": MODEL_NAME,
+
         "messages": [
             {
                 "role": "system",
@@ -274,13 +416,17 @@ EXTRACTION REQUIREMENTS:
                 "content": user_prompt
             }
         ],
+
         "format": WEB_ANSWER_FORMAT,
+
         "stream": False,
+
         "think": False,
+
         "options": {
             "temperature": 0,
-            "num_ctx": 8192,
-            "num_predict": 512
+            "num_ctx": NUM_CTX,
+            "num_predict": NUM_PREDICT
         }
     }
 
@@ -301,7 +447,9 @@ EXTRACTION REQUIREMENTS:
         result = json.loads(content)
 
         answer = result.get("answer")
+
         evidence = result.get("evidence")
+
         source_id = result.get("source_id")
 
         # ----------------------------------------------------
@@ -377,10 +525,15 @@ EXTRACTION REQUIREMENTS:
         # ----------------------------------------------------
 
         return {
+
             "answer": answer.strip(),
+
             "evidence": evidence.strip(),
+
             "source_url": selected_source["url"],
+
             "source_title": selected_source["title"],
+
             "status": "extracted"
         }
 
@@ -397,7 +550,12 @@ EXTRACTION REQUIREMENTS:
             f"Ollama timed out while extracting {field_name}."
         )
 
-    except (ValueError, KeyError, TypeError, IndexError) as error:
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        IndexError
+    ) as error:
 
         print(
             f"Invalid response while extracting {field_name}: "
@@ -411,7 +569,6 @@ EXTRACTION REQUIREMENTS:
             "status": "invalid_model_response"
         }
 
-
 # ============================================================
 # EXTRACT ALL MISSING FIELDS
 # ============================================================
@@ -420,8 +577,9 @@ def extract_from_web(filtered_evidence):
     """
     Extract all missing fields using shared field definitions.
 
-    Qwen receives the appropriate description and extraction
-    instructions for every field.
+    Each field is processed separately.
+
+    Qwen receives all six properties from field_definitions.py.
     """
 
     web_results = {}
@@ -449,7 +607,7 @@ def extract_from_web(filtered_evidence):
         print("Relevant chunks:", len(evidence_chunks))
 
         # ----------------------------------------------------
-        # GET SHARED FIELD DEFINITION
+        # GET COMPLETE SHARED FIELD DEFINITION
         # ----------------------------------------------------
 
         definition = get_field_definition(
@@ -471,13 +629,6 @@ def extract_from_web(filtered_evidence):
 
             continue
 
-        description = definition.get("description", "")
-
-        extraction_instruction = definition.get(
-            "extract",
-            ""
-        )
-
         # ----------------------------------------------------
         # CALL QWEN
         # ----------------------------------------------------
@@ -487,8 +638,7 @@ def extract_from_web(filtered_evidence):
             result = extract_single_field(
                 field_name=field_name,
                 section=section,
-                description=description,
-                extraction_instruction=extraction_instruction,
+                field_definition=definition,
                 evidence_chunks=evidence_chunks
             )
 
@@ -500,6 +650,10 @@ def extract_from_web(filtered_evidence):
             **result
         }
 
+        # ----------------------------------------------------
+        # DISPLAY EXTRACTION RESULT
+        # ----------------------------------------------------
+
         print("Status:", result["status"])
 
         print("Answer:", result["answer"])
@@ -507,5 +661,26 @@ def extract_from_web(filtered_evidence):
         if result.get("source_url"):
 
             print("Source:", result["source_url"])
+
+        if result.get("evidence"):
+
+            print("Evidence:", result["evidence"])
+
+    print("\n========== WEB EXTRACTION COMPLETED ==========")
+
+    print("Total fields processed:", total_fields)
+
+    successful = sum(
+        1
+        for result in web_results.values()
+        if result.get("status") == "extracted"
+    )
+
+    print("Successfully extracted:", successful)
+
+    print(
+        "Not extracted:",
+        total_fields - successful
+    )
 
     return web_results
