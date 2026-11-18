@@ -1,1 +1,1 @@
- python -c "from llm.questionnaire_extractor import get_extraction_definitions; d=get_extraction_definitions(); print('Company fields:', len(d['company'])); print('Product fields:', len(d['product'])); print('Employee definition:', d['company']['employee_count'])"
+ python -c "from schemas.field_definitions import *; print('Total:', len(get_all_field_names())); print('Company:', len(get_section_definitions('company'))); print('Product:', len(get_section_definitions('product')))"
