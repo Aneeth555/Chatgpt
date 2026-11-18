@@ -1,0 +1,161 @@
+
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+# ============================================================
+# COMPANY INFORMATION
+# ============================================================
+
+class CompanyInformation(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: Optional[str] = Field(
+        default=None,
+        description="Official name of the company being profiled."
+    )
+
+    overview: Optional[str] = Field(
+        default=None,
+        description="Company overview describing its business, purpose, "
+                    "technology, products and core capabilities."
+    )
+
+    headquarters: Optional[str] = Field(
+        default=None,
+        description="The company's headquarters location. Do not confuse "
+                    "headquarters with registered offices, branches or "
+                    "other office locations."
+    )
+
+    employee_count: Optional[str] = Field(
+        default=None,
+        description="Company-wide employee count. Preserve explicitly "
+                    "provided employee ranges or numbers."
+    )
+
+    funding: Optional[str] = Field(
+        default=None,
+        description="Funding raised by the company. Distinguish funding "
+                    "from revenue, valuation and investment targets."
+    )
+
+    revenue: Optional[str] = Field(
+        default=None,
+        description="Company revenue. Preserve the amount, currency and "
+                    "reporting period when available."
+    )
+
+    gtm_partners: Optional[str] = Field(
+        default=None,
+        description="Go-to-market partners that help the company sell, "
+                    "distribute, commercialize or reach customers."
+    )
+
+    key_customers: Optional[str] = Field(
+        default=None,
+        description="Organizations that purchase, use or are explicitly "
+                    "identified as customers of the company or its products."
+    )
+
+    competitors: Optional[str] = Field(
+        default=None,
+        description="Main companies offering competing products or solutions "
+                    "addressing similar customer needs or markets."
+    )
+
+
+# ============================================================
+# PRODUCT INFORMATION
+# ============================================================
+
+class ProductInformation(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_name: Optional[str] = Field(
+        default=None,
+        description="Name of the specific product being profiled."
+    )
+
+    description: Optional[str] = Field(
+        default=None,
+        description="Product description covering its purpose, functionality, "
+                    "capabilities and primary use cases."
+    )
+
+    vertical_market: Optional[str] = Field(
+        default=None,
+        description="Industries or market sectors that the product serves "
+                    "or specifically targets."
+    )
+
+    route_to_market: Optional[str] = Field(
+        default=None,
+        description="Commercial route through which the product reaches "
+                    "customers, such as direct sales, channel partners "
+                    "or distributors."
+    )
+
+    inference_hardware: Optional[str] = Field(
+        default=None,
+        description="Current inference hardware: hardware currently used "
+                    "to execute trained models and perform inference."
+    )
+
+    deployment_type: Optional[str] = Field(
+        default=None,
+        description="Product deployment model, such as cloud, on-premises, "
+                    "edge, mobile, desktop or hybrid deployment."
+    )
+
+    training_hardware: Optional[str] = Field(
+        default=None,
+        description="Current training hardware: hardware currently used "
+                    "to train or fine-tune AI models."
+    )
+
+    models: Optional[str] = Field(
+        default=None,
+        description="Specific AI models, model families and architectures "
+                    "used by the product."
+    )
+
+    ai_framework: Optional[str] = Field(
+        default=None,
+        description="Current AI development or training frameworks used "
+                    "to build, train or fine-tune the product's models."
+    )
+
+    serving_framework: Optional[str] = Field(
+        default=None,
+        description="Current serving frameworks and inference runtimes "
+                    "used to deploy, execute or optimize models. "
+                    "Distinguish current tools from future targets."
+    )
+
+    additional_ai_software_stack: Optional[str] = Field(
+        default=None,
+        description="Additional supporting AI and data software, including "
+                    "databases, streaming technologies, MLOps, orchestration "
+                    "and observability tools."
+    )
+
+
+# ============================================================
+# COMPLETE ONE-PAGER EXTRACTION
+# ============================================================
+
+class OnePagerExtraction(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    company: CompanyInformation = Field(
+        description="Extracted company information."
+    )
+
+    product: ProductInformation = Field(
+        description="Extracted product information."
+    )
