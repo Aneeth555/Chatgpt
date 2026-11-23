@@ -1,118 +1,168 @@
- 
 from pathlib import Path
-from pptx import Presentation
-from zipfile import ZipFile
 
+from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.oxml.ns import qn
+
+
+# Project directory
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Clean template
 INPUT_FILE = (
     BASE_DIR
     / "templates"
     / "company_one_pager_template.pptx"
 )
-
-prs = Presentation(str(INPUT_FILE))
-
-slide = prs.slides[0]
-
-print("CLEAN TEMPLATE INSPECTION")
-print("=" * 50)
-
-for i, shape in enumerate(slide.shapes):
-
-    print(f"\nShape {i}: {shape.name}")
-    print("Type:", shape.shape_type)
-
-    if shape.has_text_frame:
-        print("Text:", repr(shape.text))
-
-    if shape.is_placeholder:
-        print(
-            "Placeholder:",
-            shape.placeholder_format.type
-        )
-
-    blips = shape._element.xpath(".//a:blip")
-
-    if blips:
-        print("IMAGE CONTENT FOUND")
-
-        for blip in blips:
-            print(
-                "Relationship ID:",
-                blip.get(
-                    "{http://schemas.openxmlformats.org/"
-                    "officeDocument/2006/relationships}embed"
-                )
-            )
- def inspect_picture_placeholder_xml(presentation):
+def inspect_picture_placeholders(presentation):
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
     ):
 
-        print(f"\n--- SLIDE {slide_number} ---")
+        print(f"\n========== SLIDE {slide_number} ==========")
 
         for shape in slide.shapes:
 
             if not shape.is_placeholder:
                 continue
 
-            if shape.placeholder_format.type != 18:
+            if shape.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
                 continue
 
-            print(f"\nPICTURE: {shape.name}")
+            print("\nPICTURE PLACEHOLDER:", shape.name)
 
-            # Check image references on slide
-            blips = shape._element.xpath(".//a:blip")
+            # Slide placeholder information
+            slide_type = shape.placeholder_format.type
+            slide_index = shape.placeholder_format.idx
+            slide_blips = shape._element.xpath(".//a:blip")
 
-            print("Slide image references:", len(blips))
+            print("Slide placeholder type:", slide_type)
+            print("Slide placeholder index:", slide_index)
+            print("Slide shape type:", shape.shape_type)
+            print("Slide image references:", len(slide_blips))
 
-            for blip in blips:
-                print("Embedded ID:", blip.get(qn("r:embed")))
+            for blip in slide_blips:
+                print(
+                    "Slide embedded ID:",
+                    blip.get(qn("r:embed"))
+                )
 
-            # Check matching layout placeholder
-            idx = shape.placeholder_format.idx
+            # Find matching layout placeholder
+            matching_layout = None
 
             for layout_shape in slide.slide_layout.shapes:
 
                 if not layout_shape.is_placeholder:
                     continue
 
-                if layout_shape.placeholder_format.type != 18:
+                if (
+                    layout_shape.placeholder_format.type
+                    != PP_PLACEHOLDER.PICTURE
+                ):
                     continue
 
-                if layout_shape.placeholder_format.idx == idx:
+                if (
+                    layout_shape.placeholder_format.idx
+                    == slide_index
+                ):
+                    matching_layout = layout_shape
+                    break
 
-                    layout_blips = (
-                        layout_shape._element.xpath(".//a:blip")
-                    )
+            if matching_layout is None:
+                print("Matching layout placeholder: NOT FOUND")
+                continue
 
-                    print("Layout placeholder:", layout_shape.name)
-                    print("Layout image references:", len(layout_blips))
+            layout_type = matching_layout.placeholder_format.type
+            layout_index = matching_layout.placeholder_format.idx
 
-                    for blip in layout_blips:
-                        print(
-                            "Layout embedded ID:",
-                            blip.get(qn("r:embed"))
-                        )
-inspect_picture_placeholder_xml(prs)
-print("Layout image references:", len(layout_blips))
-print("Slide placeholder type:", shape.placeholder_format.type)
-print("Slide placeholder index:", shape.placeholder_format.idx)
+            layout_blips = (
+                matching_layout._element.xpath(".//a:blip")
+            )
 
-print("Layout placeholder type:", layout_shape.placeholder_format.type)
-print("Layout placeholder index:", layout_shape.placeholder_format.idx)
+            print("\nMatching layout placeholder:", matching_layout.name)
+            print("Layout placeholder type:", layout_type)
+            print("Layout placeholder index:", layout_index)
+            print("Layout shape type:", matching_layout.shape_type)
+            print("Layout image references:", len(layout_blips))
 
-print("Slide shape type:", shape.shape_type)
-print("Layout shape type:", layout_shape.shape_type)
+            for blip in layout_blips:
+                print(
+                    "Layout embedded ID:",
+                    blip.get(qn("r:embed"))
+                )
+def inspect_text_placeholders(presentation):
 
-print("\nEMBEDDED IMAGE FILES")
-print("=" * 50)
+    print("\n========== TEXT PLACEHOLDERS ==========")
 
-with ZipFile(INPUT_FILE, "r") as archive:
+    for slide_number, slide in enumerate(
+        presentation.slides, start=1
+    ):
 
-    for name in archive.namelist():
+        print(f"\nSLIDE {slide_number}")
 
-        if name.startswith("ppt/media/"):
-            print(name)
+        for shape in slide.shapes:
+
+            if not shape.is_placeholder:
+                continue
+
+            if not shape.has_text_frame:
+                continue
+
+            if (
+                shape.placeholder_format.type
+                == PP_PLACEHOLDER.PICTURE
+            ):
+                continue
+
+            print("\nShape:", shape.name)
+            print("Text:", repr(shape.text))
+            print(
+                "Placeholder type:",
+                shape.placeholder_format.type
+            )
+def inspect_embedded_images():
+
+    import zipfile
+
+    print("\n========== EMBEDDED IMAGE FILES ==========")
+
+    with zipfile.ZipFile(INPUT_FILE, "r") as pptx_file:
+
+        image_files = [
+            name for name in pptx_file.namelist()
+            if name.startswith("ppt/media/")
+        ]
+
+        if not image_files:
+            print("No embedded image files found.")
+        else:
+            for image_file in image_files:
+                print(image_file)
+
+        print("\nTotal embedded image files:", len(image_files))
+
+
+def main():
+
+    if not INPUT_FILE.exists():
+        print("ERROR: Clean template not found.")
+        print(INPUT_FILE)
+        return
+
+    presentation = Presentation(str(INPUT_FILE))
+
+    print("CLEAN TEMPLATE INSPECTION")
+    print("File:", INPUT_FILE)
+
+    inspect_picture_placeholders(presentation)
+
+    inspect_text_placeholders(presentation)
+
+    inspect_embedded_images()
+
+    print("\n========== INSPECTION COMPLETED ==========")
+
+
+if __name__ == "__main__":
+    main()
