@@ -1,53 +1,59 @@
  
+from pathlib import Path
 from pptx import Presentation
 
-INPUT_FILE = "templates/original_one_pager.pptx"
-OUTPUT_FILE = "output/template_inspection.txt"
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-prs = Presentation(INPUT_FILE)
+INPUT_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
 
-with open(OUTPUT_FILE, "w", encoding="utf-8") as file:
+prs = Presentation(str(INPUT_FILE))
 
-    file.write("POWERPOINT TEMPLATE INSPECTION\n")
-    file.write("=" * 60 + "\n")
 
-    file.write(f"Slides: {len(prs.slides)}\n")
-    file.write(f"Width: {prs.slide_width}\n")
-    file.write(f"Height: {prs.slide_height}\n")
+def inspect_shapes(shapes, location):
 
-    for slide_number, slide in enumerate(prs.slides, start=1):
+    print(f"\n===== {location} =====")
 
-        file.write(f"\n\nSLIDE {slide_number}\n")
-        file.write("=" * 60 + "\n")
+    for i, shape in enumerate(shapes):
 
-        for shape_number, shape in enumerate(slide.shapes):
+        print(f"\nShape index: {i}")
+        print("Name:", shape.name)
+        print("Type:", shape.shape_type)
 
-            file.write(f"\nShape Number: {shape_number}\n")
-            file.write(f"Shape Name: {shape.name}\n")
-            file.write(f"Shape Type: {shape.shape_type}\n")
+        print(
+            "Position:",
+            shape.left,
+            shape.top,
+            shape.width,
+            shape.height
+        )
 
-            file.write(
-                f"Position: {shape.left}, {shape.top}\n"
+        if shape.is_placeholder:
+
+            print(
+                "Placeholder type:",
+                shape.placeholder_format.type
             )
 
-            file.write(
-                f"Size: {shape.width}, {shape.height}\n"
-            )
+        if shape.shape_type == 13:
+            print("ACTUAL PICTURE FOUND")
 
-            if shape.has_text_frame:
-                file.write(f"Text: {shape.text!r}\n")
+        if shape.has_text_frame and shape.text.strip():
+            print("Text:", repr(shape.text))
 
-            if shape.has_table:
 
-                file.write("TABLE CONTENT:\n")
+for slide_number, slide in enumerate(prs.slides, start=1):
 
-                for row in shape.table.rows:
-                    file.write(
-                        str([cell.text for cell in row.cells]) + "\n"
-                    )
+    inspect_shapes(
+        slide.shapes,
+        f"SLIDE {slide_number}"
+    )
 
-            if shape.shape_type == 13:
-                file.write("IMAGE FOUND\n")
+    inspect_shapes(
+        slide.slide_layout.shapes,
+        f"SLIDE {slide_number} LAYOUT"
+    )
 
-print("Inspection completed!")
-print("Saved to:", OUTPUT_FILE)
+    inspect_shapes(
+        slide.slide_layout.slide_master.shapes,
+        f"SLIDE {slide_number} MASTER"
+    )
