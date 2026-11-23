@@ -1,4 +1,4 @@
- from pathlib import Path
+from pathlib import Path
 import shutil
 
 from pptx import Presentation
@@ -38,28 +38,14 @@ TEXT_SHAPE_INDICES = [
 ]
 
 
-def clear_text_placeholders(slide):
+def clear_picture_placeholders(slide):
 
-    for index in TEXT_SHAPE_INDICES:
+    # Preserve all original picture placeholders and images.
+    # They will be replaced during PPTX generation.
 
-        if index >= len(slide.shapes):
-            continue
+    placeholder_count = 0
 
-        shape = slide.shapes[index]
-
-        if not shape.has_text_frame:
-            continue
-
-        # Clear existing text
-        shape.text_frame.clear()
-
-        print(f"Cleared text: Shape {index}")
- def clear_picture_placeholders(slide):
-
-    removed_count = 0
-
-    # Work on a copy because we are removing shapes
-    for shape in list(slide.shapes):
+    for shape in slide.shapes:
 
         if not shape.is_placeholder:
             continue
@@ -67,31 +53,14 @@ def clear_text_placeholders(slide):
         if shape.placeholder_format.type != 18:
             continue
 
-        # Collect image relationships
-        blips = shape._element.xpath(".//a:blip")
-
-        for blip in blips:
-
-            relationship_id = blip.get(qn("r:embed"))
-
-            if relationship_id:
-                slide.part.drop_rel(relationship_id)
-
-        # Remove the slide-level placeholder override
-        shape_element = shape._element
-        parent = shape_element.getparent()
-
-        if parent is not None:
-            parent.remove(shape_element)
-
-        removed_count += 1
+        placeholder_count += 1
 
     print(
-        "Removed slide-level picture placeholders:",
-        removed_count
+        "Original picture placeholders preserved:",
+        placeholder_count
     )
 
-    return removed_count
+    return placeholder_count
 def main():
 
     if not ORIGINAL_FILE.exists():
