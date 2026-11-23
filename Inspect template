@@ -45,13 +45,13 @@ for i, shape in enumerate(slide.shapes):
                     "officeDocument/2006/relationships}embed"
                 )
             )
-def inspect_picture_placeholder_xml(presentation):
+ def inspect_picture_placeholder_xml(presentation):
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
     ):
 
-        print(f"\nSLIDE {slide_number} PICTURE PLACEHOLDERS")
+        print(f"\n--- SLIDE {slide_number} ---")
 
         for shape in slide.shapes:
 
@@ -61,13 +61,18 @@ def inspect_picture_placeholder_xml(presentation):
             if shape.placeholder_format.type != 18:
                 continue
 
-            placeholder_idx = shape.placeholder_format.idx
+            print(f"\nPICTURE: {shape.name}")
 
-            print("\nSLIDE SHAPE:", shape.name)
-            print("PLACEHOLDER INDEX:", placeholder_idx)
-            print(shape._element.xml)
+            # Check image references on slide
+            blips = shape._element.xpath(".//a:blip")
 
-            print("\nMATCHING LAYOUT PLACEHOLDER")
+            print("Slide image references:", len(blips))
+
+            for blip in blips:
+                print("Embedded ID:", blip.get(qn("r:embed")))
+
+            # Check matching layout placeholder
+            idx = shape.placeholder_format.idx
 
             for layout_shape in slide.slide_layout.shapes:
 
@@ -77,11 +82,20 @@ def inspect_picture_placeholder_xml(presentation):
                 if layout_shape.placeholder_format.type != 18:
                     continue
 
-                if layout_shape.placeholder_format.idx == placeholder_idx:
+                if layout_shape.placeholder_format.idx == idx:
 
-                    print(layout_shape.name)
-                    print(layout_shape._element.xml)
+                    layout_blips = (
+                        layout_shape._element.xpath(".//a:blip")
+                    )
 
+                    print("Layout placeholder:", layout_shape.name)
+                    print("Layout image references:", len(layout_blips))
+
+                    for blip in layout_blips:
+                        print(
+                            "Layout embedded ID:",
+                            blip.get(qn("r:embed"))
+                        )
 inspect_picture_placeholder_xml(presentation)
 
 print("\nEMBEDDED IMAGE FILES")
