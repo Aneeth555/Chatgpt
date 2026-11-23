@@ -1,0 +1,98 @@
+
+from pathlib import Path
+from pptx import Presentation
+
+
+# Project directory
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Input PowerPoint
+INPUT_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
+
+# Clean template output
+OUTPUT_FILE = (
+    BASE_DIR
+    / "templates"
+    / "company_one_pager_template.pptx"
+)
+
+
+# Shape numbers containing company-specific answers
+DYNAMIC_TEXT_SHAPES = [
+    0,       # Company name
+    2,       # Company overview
+    4,       # Product description
+    5,       # Product name
+    6,       # Vertical market
+    7,       # Current AI framework
+    8,       # Training hardware
+    9,       # Route to market
+    10,      # Deployment type
+    11,      # Models
+    12,      # Current serving framework
+    13,      # Current inference hardware
+    14,      # Additional AI software stack
+    15,      # Company website
+    16,      # Headquarters
+    17,      # Employee count
+    18,      # Funding
+    19       # Revenue
+]
+
+def clear_text_preserving_format(shape):
+
+    if not shape.has_text_frame:
+        return
+
+    text_frame = shape.text_frame
+
+    for paragraph in text_frame.paragraphs:
+
+        for run in paragraph.runs:
+            run.text = ""
+
+
+def create_clean_template():
+
+    if not INPUT_FILE.exists():
+        raise FileNotFoundError(
+            f"Original template not found: {INPUT_FILE}"
+        )
+
+    prs = Presentation(str(INPUT_FILE))
+
+    if len(prs.slides) != 1:
+        raise ValueError(
+            "Expected a one-slide PowerPoint template."
+        )
+
+    slide = prs.slides[0]
+
+    for shape_index in DYNAMIC_TEXT_SHAPES:
+
+        if shape_index >= len(slide.shapes):
+            raise IndexError(
+                f"Shape index {shape_index} does not exist."
+            )
+
+        shape = slide.shapes[shape_index]
+
+        clear_text_preserving_format(shape)
+
+        print(
+            f"Cleared Shape {shape_index}: {shape.name}"
+        )
+
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    prs.save(str(OUTPUT_FILE))
+
+    print("\nClean template created successfully!")
+    print("Saved at:", OUTPUT_FILE)
+
+
+if __name__ == "__main__":
+    create_clean_template()
