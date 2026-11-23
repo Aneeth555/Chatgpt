@@ -45,6 +45,44 @@ for i, shape in enumerate(slide.shapes):
                     "officeDocument/2006/relationships}embed"
                 )
             )
+def inspect_picture_placeholder_xml(presentation):
+
+    for slide_number, slide in enumerate(
+        presentation.slides, start=1
+    ):
+
+        print(f"\nSLIDE {slide_number} PICTURE PLACEHOLDERS")
+
+        for shape in slide.shapes:
+
+            if not shape.is_placeholder:
+                continue
+
+            if shape.placeholder_format.type != 18:
+                continue
+
+            placeholder_idx = shape.placeholder_format.idx
+
+            print("\nSLIDE SHAPE:", shape.name)
+            print("PLACEHOLDER INDEX:", placeholder_idx)
+            print(shape._element.xml)
+
+            print("\nMATCHING LAYOUT PLACEHOLDER")
+
+            for layout_shape in slide.slide_layout.shapes:
+
+                if not layout_shape.is_placeholder:
+                    continue
+
+                if layout_shape.placeholder_format.type != 18:
+                    continue
+
+                if layout_shape.placeholder_format.idx == placeholder_idx:
+
+                    print(layout_shape.name)
+                    print(layout_shape._element.xml)
+
+inspect_picture_placeholder_xml(presentation)
 
 print("\nEMBEDDED IMAGE FILES")
 print("=" * 50)
