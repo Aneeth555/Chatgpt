@@ -54,11 +54,12 @@ def clear_text_placeholders(slide):
         shape.text_frame.clear()
 
         print(f"Cleared text: Shape {index}")
-def clear_picture_placeholders(slide):
+ def clear_picture_placeholders(slide):
 
     removed_count = 0
 
-    for shape in slide.shapes:
+    # Work on a copy because we are removing shapes
+    for shape in list(slide.shapes):
 
         if not shape.is_placeholder:
             continue
@@ -66,27 +67,29 @@ def clear_picture_placeholders(slide):
         if shape.placeholder_format.type != 18:
             continue
 
-        element = shape._element
+        # Collect image relationships
+        blips = shape._element.xpath(".//a:blip")
 
-        # Remove existing picture fill
-        for blip_fill in element.xpath(".//a:blipFill"):
+        for blip in blips:
 
-            parent = blip_fill.getparent()
+            relationship_id = blip.get(qn("r:embed"))
 
-            if parent is not None:
-                parent.remove(blip_fill)
+            if relationship_id:
+                slide.part.drop_rel(relationship_id)
 
-        # Remove image references from the placeholder
-        for blip in element.xpath(".//a:blip"):
+        # Remove the slide-level placeholder override
+        shape_element = shape._element
+        parent = shape_element.getparent()
 
-            parent = blip.getparent()
-
-            if parent is not None:
-                parent.remove(blip)
+        if parent is not None:
+            parent.remove(shape_element)
 
         removed_count += 1
 
-    print(f"Cleaned picture placeholders: {removed_count}")
+    print(
+        "Removed slide-level picture placeholders:",
+        removed_count
+    )
 
     return removed_count
 def main():
