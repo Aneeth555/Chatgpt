@@ -1,14 +1,12 @@
-from pathlib import Path
+ from pathlib import Path
+import zipfile
 
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.oxml.ns import qn
 
 
-# Project directory
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Clean template
 INPUT_FILE = (
     BASE_DIR
     / "templates"
@@ -27,28 +25,25 @@ def inspect_picture_placeholders(presentation):
             if not shape.is_placeholder:
                 continue
 
-            if shape.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
+            if (
+                shape.placeholder_format.type
+                != PP_PLACEHOLDER.PICTURE
+            ):
                 continue
 
             print("\nPICTURE PLACEHOLDER:", shape.name)
 
-            # Slide placeholder information
-            slide_type = shape.placeholder_format.type
             slide_index = shape.placeholder_format.idx
             slide_blips = shape._element.xpath(".//a:blip")
 
-            print("Slide placeholder type:", slide_type)
+            print(
+                "Slide placeholder type:",
+                shape.placeholder_format.type
+            )
             print("Slide placeholder index:", slide_index)
             print("Slide shape type:", shape.shape_type)
             print("Slide image references:", len(slide_blips))
 
-            for blip in slide_blips:
-                print(
-                    "Slide embedded ID:",
-                    blip.get(qn("r:embed"))
-                )
-
-            # Find matching layout placeholder
             matching_layout = None
 
             for layout_shape in slide.slide_layout.shapes:
@@ -73,24 +68,30 @@ def inspect_picture_placeholders(presentation):
                 print("Matching layout placeholder: NOT FOUND")
                 continue
 
-            layout_type = matching_layout.placeholder_format.type
-            layout_index = matching_layout.placeholder_format.idx
-
             layout_blips = (
                 matching_layout._element.xpath(".//a:blip")
             )
 
-            print("\nMatching layout placeholder:", matching_layout.name)
-            print("Layout placeholder type:", layout_type)
-            print("Layout placeholder index:", layout_index)
-            print("Layout shape type:", matching_layout.shape_type)
-            print("Layout image references:", len(layout_blips))
-
-            for blip in layout_blips:
-                print(
-                    "Layout embedded ID:",
-                    blip.get(qn("r:embed"))
-                )
+            print(
+                "Matching layout placeholder:",
+                matching_layout.name
+            )
+            print(
+                "Layout placeholder type:",
+                matching_layout.placeholder_format.type
+            )
+            print(
+                "Layout placeholder index:",
+                matching_layout.placeholder_format.idx
+            )
+            print(
+                "Layout shape type:",
+                matching_layout.shape_type
+            )
+            print(
+                "Layout image references:",
+                len(layout_blips)
+            )
 def inspect_text_placeholders(presentation):
 
     print("\n========== TEXT PLACEHOLDERS ==========")
@@ -120,32 +121,107 @@ def inspect_text_placeholders(presentation):
             print(
                 "Placeholder type:",
                 shape.placeholder_format.type
-            )
-def inspect_embedded_images():
+def inspect_placeholder_fill(presentation):
 
-    import zipfile
+    print("\n========== PLACEHOLDER FILL INSPECTION ==========")
+
+    for slide in presentation.slides:
+
+        for shape in slide.shapes:
+
+            if not shape.is_placeholder:
+                continue
+
+            if (
+                shape.placeholder_format.type
+                != PP_PLACEHOLDER.PICTURE
+            ):
+                continue
+
+            print("\nPlaceholder:", shape.name)
+
+            element = shape._element
+
+            print(
+                "Slide has blipFill:",
+                len(element.xpath(".//a:blipFill"))
+            )
+
+            print(
+                "Slide has solidFill:",
+                len(element.xpath(".//a:solidFill"))
+            )
+
+            print(
+                "Slide has noFill:",
+                len(element.xpath(".//a:noFill"))
+            )
+
+            layout_shape = None
+
+            for candidate in shape.part.slide_layout.shapes:
+
+                if not candidate.is_placeholder:
+                    continue
+
+                if (
+                    candidate.placeholder_format.type
+                    != PP_PLACEHOLDER.PICTURE
+                ):
+                    continue
+
+                if (
+                    candidate.placeholder_format.idx
+                    == shape.placeholder_format.idx
+                ):
+                    layout_shape = candidate
+                    break
+
+            if layout_shape is not None:
+
+                layout_element = layout_shape._element
+
+                print(
+                    "Layout has blipFill:",
+                    len(layout_element.xpath(".//a:blipFill"))
+                )
+
+                print(
+                    "Layout has solidFill:",
+                    len(layout_element.xpath(".//a:solidFill"))
+                )
+
+                print(
+                    "Layout has noFill:",
+                    len(layout_element.xpath(".//a:noFill"))
+                )
+def inspect_embedded_images():
 
     print("\n========== EMBEDDED IMAGE FILES ==========")
 
     with zipfile.ZipFile(INPUT_FILE, "r") as pptx_file:
 
         image_files = [
-            name for name in pptx_file.namelist()
+            name
+            for name in pptx_file.namelist()
             if name.startswith("ppt/media/")
         ]
 
         if not image_files:
             print("No embedded image files found.")
+
         else:
             for image_file in image_files:
                 print(image_file)
 
-        print("\nTotal embedded image files:", len(image_files))
-
-
+        print(
+            "\nTotal embedded image files:",
+            len(image_files)
+        )
 def main():
 
     if not INPUT_FILE.exists():
+
         print("ERROR: Clean template not found.")
         print(INPUT_FILE)
         return
@@ -155,10 +231,16 @@ def main():
     print("CLEAN TEMPLATE INSPECTION")
     print("File:", INPUT_FILE)
 
+    # 1. Picture placeholder inspection
     inspect_picture_placeholders(presentation)
 
+    # 2. Text placeholder inspection
     inspect_text_placeholders(presentation)
 
+    # 3. Picture fill inspection
+    inspect_placeholder_fill(presentation)
+
+    # 4. Embedded image inspection
     inspect_embedded_images()
 
     print("\n========== INSPECTION COMPLETED ==========")
@@ -166,3 +248,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
