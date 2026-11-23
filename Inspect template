@@ -1,31 +1,53 @@
-
+ 
 from pptx import Presentation
 
 INPUT_FILE = "templates/original_one_pager.pptx"
+OUTPUT_FILE = "output/template_inspection.txt"
 
 prs = Presentation(INPUT_FILE)
 
-print("Number of slides:", len(prs.slides))
-print("Slide dimensions:",
-      prs.slide_width, "x", prs.slide_height)
+with open(OUTPUT_FILE, "w", encoding="utf-8") as file:
 
-for slide_number, slide in enumerate(prs.slides, start=1):
+    file.write("POWERPOINT TEMPLATE INSPECTION\n")
+    file.write("=" * 60 + "\n")
 
-    print(f"\n========== SLIDE {slide_number} ==========")
+    file.write(f"Slides: {len(prs.slides)}\n")
+    file.write(f"Width: {prs.slide_width}\n")
+    file.write(f"Height: {prs.slide_height}\n")
 
-    for shape_number, shape in enumerate(slide.shapes):
+    for slide_number, slide in enumerate(prs.slides, start=1):
 
-        print(f"\nShape {shape_number}")
-        print("Name:", shape.name)
-        print("Type:", shape.shape_type)
+        file.write(f"\n\nSLIDE {slide_number}\n")
+        file.write("=" * 60 + "\n")
 
-        if shape.has_text_frame:
-            print("Text:", repr(shape.text))
+        for shape_number, shape in enumerate(slide.shapes):
 
-        if shape.has_table:
-            print("TABLE:")
-            for row in shape.table.rows:
-                print([cell.text for cell in row.cells])
+            file.write(f"\nShape Number: {shape_number}\n")
+            file.write(f"Shape Name: {shape.name}\n")
+            file.write(f"Shape Type: {shape.shape_type}\n")
 
-        if shape.shape_type == 13:
-            print("IMAGE:", shape.width, "x", shape.height)
+            file.write(
+                f"Position: {shape.left}, {shape.top}\n"
+            )
+
+            file.write(
+                f"Size: {shape.width}, {shape.height}\n"
+            )
+
+            if shape.has_text_frame:
+                file.write(f"Text: {shape.text!r}\n")
+
+            if shape.has_table:
+
+                file.write("TABLE CONTENT:\n")
+
+                for row in shape.table.rows:
+                    file.write(
+                        str([cell.text for cell in row.cells]) + "\n"
+                    )
+
+            if shape.shape_type == 13:
+                file.write("IMAGE FOUND\n")
+
+print("Inspection completed!")
+print("Saved to:", OUTPUT_FILE)
