@@ -1,59 +1,57 @@
  
 from pathlib import Path
 from pptx import Presentation
+from zipfile import ZipFile
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-INPUT_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
+INPUT_FILE = (
+    BASE_DIR
+    / "templates"
+    / "company_one_pager_template.pptx"
+)
 
 prs = Presentation(str(INPUT_FILE))
 
+slide = prs.slides[0]
 
-def inspect_shapes(shapes, location):
+print("CLEAN TEMPLATE INSPECTION")
+print("=" * 50)
 
-    print(f"\n===== {location} =====")
+for i, shape in enumerate(slide.shapes):
 
-    for i, shape in enumerate(shapes):
+    print(f"\nShape {i}: {shape.name}")
+    print("Type:", shape.shape_type)
 
-        print(f"\nShape index: {i}")
-        print("Name:", shape.name)
-        print("Type:", shape.shape_type)
+    if shape.has_text_frame:
+        print("Text:", repr(shape.text))
 
+    if shape.is_placeholder:
         print(
-            "Position:",
-            shape.left,
-            shape.top,
-            shape.width,
-            shape.height
+            "Placeholder:",
+            shape.placeholder_format.type
         )
 
-        if shape.is_placeholder:
+    blips = shape._element.xpath(".//a:blip")
 
+    if blips:
+        print("IMAGE CONTENT FOUND")
+
+        for blip in blips:
             print(
-                "Placeholder type:",
-                shape.placeholder_format.type
+                "Relationship ID:",
+                blip.get(
+                    "{http://schemas.openxmlformats.org/"
+                    "officeDocument/2006/relationships}embed"
+                )
             )
 
-        if shape.shape_type == 13:
-            print("ACTUAL PICTURE FOUND")
+print("\nEMBEDDED IMAGE FILES")
+print("=" * 50)
 
-        if shape.has_text_frame and shape.text.strip():
-            print("Text:", repr(shape.text))
+with ZipFile(INPUT_FILE, "r") as archive:
 
+    for name in archive.namelist():
 
-for slide_number, slide in enumerate(prs.slides, start=1):
-
-    inspect_shapes(
-        slide.shapes,
-        f"SLIDE {slide_number}"
-    )
-
-    inspect_shapes(
-        slide.slide_layout.shapes,
-        f"SLIDE {slide_number} LAYOUT"
-    )
-
-    inspect_shapes(
-        slide.slide_layout.slide_master.shapes,
-        f"SLIDE {slide_number} MASTER"
-    )
+        if name.startswith("ppt/media/"):
+            print(name)
