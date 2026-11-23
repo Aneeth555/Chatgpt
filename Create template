@@ -1,0 +1,31 @@
+
+from pptx import Presentation
+
+INPUT_FILE = "templates/original_one_pager.pptx"
+
+prs = Presentation(INPUT_FILE)
+
+print("Number of slides:", len(prs.slides))
+print("Slide dimensions:",
+      prs.slide_width, "x", prs.slide_height)
+
+for slide_number, slide in enumerate(prs.slides, start=1):
+
+    print(f"\n========== SLIDE {slide_number} ==========")
+
+    for shape_number, shape in enumerate(slide.shapes):
+
+        print(f"\nShape {shape_number}")
+        print("Name:", shape.name)
+        print("Type:", shape.shape_type)
+
+        if shape.has_text_frame:
+            print("Text:", repr(shape.text))
+
+        if shape.has_table:
+            print("TABLE:")
+            for row in shape.table.rows:
+                print([cell.text for cell in row.cells])
+
+        if shape.shape_type == 13:
+            print("IMAGE:", shape.width, "x", shape.height)
