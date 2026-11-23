@@ -96,7 +96,16 @@ for i, shape in enumerate(slide.shapes):
                             "Layout embedded ID:",
                             blip.get(qn("r:embed"))
                         )
-inspect_picture_placeholder_xml(presentation)
+inspect_picture_placeholder_xml(prs)
+print("Layout image references:", len(layout_blips))
+print("Slide placeholder type:", shape.placeholder_format.type)
+print("Slide placeholder index:", shape.placeholder_format.idx)
+
+print("Layout placeholder type:", layout_shape.placeholder_format.type)
+print("Layout placeholder index:", layout_shape.placeholder_format.idx)
+
+print("Slide shape type:", shape.shape_type)
+print("Layout shape type:", layout_shape.shape_type)
 
 print("\nEMBEDDED IMAGE FILES")
 print("=" * 50)
