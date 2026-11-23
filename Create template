@@ -66,29 +66,27 @@ def clear_picture_placeholders(slide):
         if shape.placeholder_format.type != 18:
             continue
 
-        # Find embedded image relationships
-        blips = shape._element.xpath(".//a:blip")
+        element = shape._element
 
-        for blip in blips:
+        # Remove existing picture fill
+        for blip_fill in element.xpath(".//a:blipFill"):
 
-            relationship_id = blip.get(qn("r:embed"))
+            parent = blip_fill.getparent()
 
-            # Remove image fill, preserving placeholder geometry
-            image_fills = shape._element.xpath(".//a:blipFill")
+            if parent is not None:
+                parent.remove(blip_fill)
 
-            for image_fill in image_fills:
-                parent = image_fill.getparent()
+        # Remove image references from the placeholder
+        for blip in element.xpath(".//a:blip"):
 
-                if parent is not None:
-                    parent.remove(image_fill)
+            parent = blip.getparent()
 
-            # Remove image relationship
-            if relationship_id:
-                shape.part.drop_rel(relationship_id)
+            if parent is not None:
+                parent.remove(blip)
 
-            removed_count += 1
+        removed_count += 1
 
-    print(f"Removed logo images: {removed_count}")
+    print(f"Cleaned picture placeholders: {removed_count}")
 
     return removed_count
 def main():
