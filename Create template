@@ -1,98 +1,135 @@
+ from pathlib import Path
+import shutil
 
-from pathlib import Path
 from pptx import Presentation
+from pptx.oxml.ns import qn
 
 
 # Project directory
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Input PowerPoint
-INPUT_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
+# Input: Original PowerPoint
+ORIGINAL_FILE = (
+    BASE_DIR
+    / "templates"
+    / "original_one_pager.pptx"
+)
 
-# Clean template output
+# Output: Reusable clean template
 OUTPUT_FILE = (
     BASE_DIR
     / "templates"
     / "company_one_pager_template.pptx"
 )
 
+# Backup of the original template
+BACKUP_FILE = (
+    BASE_DIR
+    / "templates"
+    / "original_one_pager_backup.pptx"
+)
 
-# Shape numbers containing company-specific answers
-DYNAMIC_TEXT_SHAPES = [
-    0,       # Company name
-    2,       # Company overview
-    4,       # Product description
-    5,       # Product name
-    6,       # Vertical market
-    7,       # Current AI framework
-    8,       # Training hardware
-    9,       # Route to market
-    10,      # Deployment type
-    11,      # Models
-    12,      # Current serving framework
-    13,      # Current inference hardware
-    14,      # Additional AI software stack
-    15,      # Company website
-    16,      # Headquarters
-    17,      # Employee count
-    18,      # Funding
-    19       # Revenue
+
+# Text placeholders containing company/product answers
+TEXT_SHAPE_INDICES = [
+    0, 2, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17,
+    18, 19
 ]
 
-def clear_text_preserving_format(shape):
 
-    if not shape.has_text_frame:
+def clear_text_placeholders(slide):
+
+    for index in TEXT_SHAPE_INDICES:
+
+        if index >= len(slide.shapes):
+            continue
+
+        shape = slide.shapes[index]
+
+        if not shape.has_text_frame:
+            continue
+
+        # Clear existing text
+        shape.text_frame.clear()
+
+        print(f"Cleared text: Shape {index}")
+def clear_picture_placeholders(slide):
+
+    removed_count = 0
+
+    for shape in slide.shapes:
+
+        if not shape.is_placeholder:
+            continue
+
+        if shape.placeholder_format.type != 18:
+            continue
+
+        # Find embedded image relationships
+        blips = shape._element.xpath(".//a:blip")
+
+        for blip in blips:
+
+            relationship_id = blip.get(qn("r:embed"))
+
+            # Remove image fill, preserving placeholder geometry
+            image_fills = shape._element.xpath(".//a:blipFill")
+
+            for image_fill in image_fills:
+                parent = image_fill.getparent()
+
+                if parent is not None:
+                    parent.remove(image_fill)
+
+            # Remove image relationship
+            if relationship_id:
+                shape.part.drop_rel(relationship_id)
+
+            removed_count += 1
+
+    print(f"Removed logo images: {removed_count}")
+
+    return removed_count
+def main():
+
+    if not ORIGINAL_FILE.exists():
+        print("ERROR: Original PowerPoint not found.")
+        print(ORIGINAL_FILE)
         return
 
-    text_frame = shape.text_frame
+    # Create backup only if it doesn't already exist
+    if not BACKUP_FILE.exists():
 
-    for paragraph in text_frame.paragraphs:
-
-        for run in paragraph.runs:
-            run.text = ""
-
-
-def create_clean_template():
-
-    if not INPUT_FILE.exists():
-        raise FileNotFoundError(
-            f"Original template not found: {INPUT_FILE}"
+        shutil.copy2(
+            ORIGINAL_FILE,
+            BACKUP_FILE
         )
 
-    prs = Presentation(str(INPUT_FILE))
+        print("Original backup created.")
 
-    if len(prs.slides) != 1:
-        raise ValueError(
-            "Expected a one-slide PowerPoint template."
-        )
+    # Load original presentation
+    presentation = Presentation(str(ORIGINAL_FILE))
 
-    slide = prs.slides[0]
+    for slide_number, slide in enumerate(
+        presentation.slides,
+        start=1
+    ):
 
-    for shape_index in DYNAMIC_TEXT_SHAPES:
+        print(f"\nProcessing Slide {slide_number}")
 
-        if shape_index >= len(slide.shapes):
-            raise IndexError(
-                f"Shape index {shape_index} does not exist."
-            )
+        clear_text_placeholders(slide)
 
-        shape = slide.shapes[shape_index]
+        clear_picture_placeholders(slide)
 
-        clear_text_preserving_format(shape)
+    # Save reusable template
+    presentation.save(str(OUTPUT_FILE))
 
-        print(
-            f"Cleared Shape {shape_index}: {shape.name}"
-        )
+    print("\nCLEAN TEMPLATE CREATED SUCCESSFULLY")
 
-    OUTPUT_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    prs.save(str(OUTPUT_FILE))
-
-    print("\nClean template created successfully!")
-    print("Saved at:", OUTPUT_FILE)
+    print("Saved at:")
+    print(OUTPUT_FILE)
 
 
 if __name__ == "__main__":
-    create_clean_template()
+    main()
