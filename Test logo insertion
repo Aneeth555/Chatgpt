@@ -1,0 +1,71 @@
+from pathlib import Path
+from pptx import Presentation
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+TEMPLATE_FILE = (
+    BASE_DIR
+    / "templates"
+    / "company_one_pager_template.pptx"
+)
+
+LOGO_FILE = (
+    BASE_DIR
+    / "test_assets"
+    / "test_logo.png"
+)
+
+OUTPUT_FILE = (
+    BASE_DIR
+    / "output"
+    / "test_logo_insertion.pptx"
+)
+def main():
+
+    if not TEMPLATE_FILE.exists():
+        print("Template not found:", TEMPLATE_FILE)
+        return
+
+    if not LOGO_FILE.exists():
+        print("Test logo not found:", LOGO_FILE)
+        return
+
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    presentation = Presentation(str(TEMPLATE_FILE))
+
+    slide = presentation.slides[0]
+
+    # Find the first picture placeholder
+    picture_placeholder = None
+
+    for shape in slide.shapes:
+
+        if not shape.is_placeholder:
+            continue
+
+        if shape.placeholder_format.type == 18:
+            picture_placeholder = shape
+            break
+
+    if picture_placeholder is None:
+        print("No picture placeholder found.")
+        return
+
+    print("Selected placeholder:", picture_placeholder.name)
+
+    # Insert image into the existing placeholder
+    picture_placeholder.insert_picture(str(LOGO_FILE))
+
+    presentation.save(str(OUTPUT_FILE))
+
+    print("\nTEST COMPLETED")
+    print("Saved:", OUTPUT_FILE)
+
+
+if __name__ == "__main__":
+    main()
