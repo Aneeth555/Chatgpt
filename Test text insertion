@@ -1,0 +1,124 @@
+
+from pathlib import Path
+
+from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
+
+
+# Project paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+TEMPLATE_FILE = (
+    BASE_DIR
+    / "templates"
+    / "company_one_pager_template.pptx"
+)
+
+OUTPUT_FILE = (
+    BASE_DIR
+    / "output"
+    / "test_text_insertion.pptx"
+)
+
+
+# Test data
+TEST_DATA = {
+    "company_name": "TEST COMPANY"
+}
+
+# PowerPoint placeholder mapping
+TEXT_FIELD_MAPPING = {
+    "company_name": 62,
+}
+
+
+def find_placeholder(slide, placeholder_index):
+
+    for shape in slide.shapes:
+
+        if not shape.is_placeholder:
+            continue
+
+        if (
+            shape.placeholder_format.type
+            == PP_PLACEHOLDER.PICTURE
+        ):
+            continue
+
+        if (
+            shape.placeholder_format.idx
+            == placeholder_index
+        ):
+            return shape
+
+    return None
+
+
+def insert_text(slide, field_name, value):
+
+    placeholder_index = TEXT_FIELD_MAPPING[field_name]
+
+    shape = find_placeholder(
+        slide,
+        placeholder_index
+    )
+
+    if shape is None:
+        raise ValueError(
+            f"Placeholder not found: {placeholder_index}"
+        )
+
+    if not shape.has_text_frame:
+        raise ValueError(
+            f"Placeholder has no text frame: {field_name}"
+        )
+
+    # Use the existing first paragraph
+    text_frame = shape.text_frame
+
+    paragraph = text_frame.paragraphs[0]
+
+    # Add text to the existing paragraph
+    run = paragraph.add_run()
+    run.text = str(value)
+
+    print(f"Inserted {field_name}: {value}")
+    print(f"Placeholder index: {placeholder_index}")
+    print(f"Shape name: {shape.name}")
+
+
+def main():
+
+    if not TEMPLATE_FILE.exists():
+        raise FileNotFoundError(TEMPLATE_FILE)
+
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # Load clean template
+    presentation = Presentation(
+        str(TEMPLATE_FILE)
+    )
+
+    slide = presentation.slides[0]
+
+    # Insert test company name
+    for field_name, value in TEST_DATA.items():
+
+        insert_text(
+            slide,
+            field_name,
+            value
+        )
+
+    # Save presentation
+    presentation.save(str(OUTPUT_FILE))
+
+    print("\nText insertion test completed.")
+    print("Output:", OUTPUT_FILE)
+
+
+if __name__ == "__main__":
+    main()
