@@ -1,11 +1,14 @@
-
+ 
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
 
 
-# Project paths
+# ==================================================
+# 1. PROJECT PATHS
+# ==================================================
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 TEMPLATE_FILE = (
@@ -21,16 +24,27 @@ OUTPUT_FILE = (
 )
 
 
-# Test data
+# ==================================================
+# 2. TEST DATA
+# ==================================================
+
 TEST_DATA = {
     "company_name": "TEST COMPANY"
 }
 
-# PowerPoint placeholder mapping
+
+# ==================================================
+# 3. TEXT PLACEHOLDER MAPPING
+# ==================================================
+
 TEXT_FIELD_MAPPING = {
     "company_name": 62,
 }
 
+
+# ==================================================
+# 4. FIND TEXT PLACEHOLDER
+# ==================================================
 
 def find_placeholder(slide, placeholder_index):
 
@@ -54,6 +68,10 @@ def find_placeholder(slide, placeholder_index):
     return None
 
 
+# ==================================================
+# 5. INSERT TEXT WHILE PRESERVING FORMATTING
+# ==================================================
+
 def insert_text(slide, field_name, value):
 
     placeholder_index = TEXT_FIELD_MAPPING[field_name]
@@ -73,38 +91,67 @@ def insert_text(slide, field_name, value):
             f"Placeholder has no text frame: {field_name}"
         )
 
-    # Use the existing first paragraph
     text_frame = shape.text_frame
 
     paragraph = text_frame.paragraphs[0]
 
-    # Add text to the existing paragraph
-    run = paragraph.add_run()
-    run.text = str(value)
+    if paragraph.runs:
 
-    print(f"Inserted {field_name}: {value}")
-    print(f"Placeholder index: {placeholder_index}")
-    print(f"Shape name: {shape.name}")
+        # Reuse the existing first run
+        # This preserves its font formatting
 
+        first_run = paragraph.runs[0]
+
+        first_run.text = str(value)
+
+        # Remove additional runs if present
+        for extra_run in list(paragraph.runs[1:]):
+
+            extra_run._r.getparent().remove(
+                extra_run._r
+            )
+
+    else:
+
+        # No existing run is available.
+        # Add a run using inherited placeholder formatting.
+
+        run = paragraph.add_run()
+        run.text = str(value)
+
+    print("\nText inserted successfully")
+    print("Field:", field_name)
+    print("Value:", value)
+    print("Placeholder index:", placeholder_index)
+    print("Shape name:", shape.name)
+
+
+# ==================================================
+# 6. MAIN FUNCTION
+# ==================================================
 
 def main():
 
     if not TEMPLATE_FILE.exists():
-        raise FileNotFoundError(TEMPLATE_FILE)
+        raise FileNotFoundError(
+            f"Template not found: {TEMPLATE_FILE}"
+        )
 
     OUTPUT_FILE.parent.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    # Load clean template
+    print("Loading clean PowerPoint template...")
+
     presentation = Presentation(
         str(TEMPLATE_FILE)
     )
 
     slide = presentation.slides[0]
 
-    # Insert test company name
+    print("Inserting test data...")
+
     for field_name, value in TEST_DATA.items():
 
         insert_text(
@@ -113,11 +160,16 @@ def main():
             value
         )
 
-    # Save presentation
-    presentation.save(str(OUTPUT_FILE))
+    print("\nSaving generated presentation...")
 
-    print("\nText insertion test completed.")
-    print("Output:", OUTPUT_FILE)
+    presentation.save(
+        str(OUTPUT_FILE)
+    )
+
+    print("\n================================")
+    print("TEXT INSERTION TEST COMPLETED")
+    print("================================")
+    print("Output file:", OUTPUT_FILE)
 
 
 if __name__ == "__main__":
