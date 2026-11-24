@@ -1,5 +1,9 @@
-from pathlib import Path
+ from pathlib import Path
+from io import BytesIO
 import shutil
+import struct
+import zlib
+import binascii
 
 from pptx import Presentation
 from pptx.oxml.ns import qn
@@ -8,29 +12,19 @@ from pptx.oxml.ns import qn
 # Project directory
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Input: Original PowerPoint
 ORIGINAL_FILE = (
-    BASE_DIR
-    / "templates"
-    / "original_one_pager.pptx"
+    BASE_DIR / "templates" / "original_one_pager.pptx"
 )
 
-# Output: Reusable clean template
 OUTPUT_FILE = (
-    BASE_DIR
-    / "templates"
-    / "company_one_pager_template.pptx"
+    BASE_DIR / "templates" / "company_one_pager_template.pptx"
 )
 
-# Backup of the original template
 BACKUP_FILE = (
-    BASE_DIR
-    / "templates"
-    / "original_one_pager_backup.pptx"
+    BASE_DIR / "templates" / "original_one_pager_backup.pptx"
 )
 
 
-# Text placeholders containing company/product answers
 TEXT_SHAPE_INDICES = [
     0, 2, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17,
@@ -38,12 +32,68 @@ TEXT_SHAPE_INDICES = [
 ]
 
 
+def create_transparent_png():
+
+    def png_chunk(chunk_type, data):
+
+        chunk = chunk_type + data
+
+        return (
+            struct.pack(">I", len(data))
+            + chunk
+            + struct.pack(
+                ">I",
+                binascii.crc32(chunk) & 0xffffffff
+            )
+        )
+
+    # One transparent RGBA pixel
+    raw_data = b"\x00\x00\x00\x00\x00"
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(
+            b"IHDR",
+            struct.pack(
+                ">2I5B",
+                1, 1, 8, 6, 0, 0, 0
+            )
+        )
+        + png_chunk(
+            b"IDAT",
+            zlib.compress(raw_data)
+        )
+        + png_chunk(b"IEND", b"")
+    )
+
+    return png
+def clear_text_placeholders(slide):
+
+    for index in TEXT_SHAPE_INDICES:
+
+        if index >= len(slide.shapes):
+            continue
+
+        shape = slide.shapes[index]
+
+        if shape.has_text_frame:
+            shape.text_frame.clear()
+
+
 def clear_picture_placeholders(slide):
 
-    # Preserve all original picture placeholders and images.
-    # They will be replaced during PPTX generation.
+    transparent_png = BytesIO(
+        create_transparent_png()
+    )
 
-    placeholder_count = 0
+    image_part, transparent_rid = (
+        slide.part.get_or_add_image_part(
+            transparent_png
+        )
+    )
+
+    replaced_count = 0
+    old_relationships = set()
 
     for shape in slide.shapes:
 
@@ -53,22 +103,70 @@ def clear_picture_placeholders(slide):
         if shape.placeholder_format.type != 18:
             continue
 
-        placeholder_count += 1
+        # Find existing image reference
+        blip = shape.element.find(
+            ".//" + qn("a:blip")
+        )
+
+        if blip is None:
+            raise ValueError(
+                f"Image reference missing: {shape.name}"
+            )
+
+        old_rid = blip.get(qn("r:embed"))
+
+        if old_rid:
+            old_relationships.add(old_rid)
+
+        # Replace original image with transparent image
+        blip.set(
+            qn("r:embed"),
+            transparent_rid
+        )
+
+        replaced_count += 1
+
+        print(
+            f"Replaced image in: {shape.name}"
+        )
+
+    # Remove old image relationships only when
+    # they are no longer referenced on this slide.
+    used_relationships = set()
+
+    for blip in slide.element.iter(qn("a:blip")):
+
+        rid = blip.get(qn("r:embed"))
+
+        if rid:
+            used_relationships.add(rid)
+
+    for old_rid in old_relationships:
+
+        if (
+            old_rid not in used_relationships
+            and old_rid in slide.part.rels
+        ):
+            slide.part.drop_rel(old_rid)
 
     print(
-        "Original picture placeholders preserved:",
-        placeholder_count
+        "Picture placeholders preserved:",
+        replaced_count
     )
 
-    return placeholder_count
+    return replaced_count
+
+
+
 def main():
 
     if not ORIGINAL_FILE.exists():
+
         print("ERROR: Original PowerPoint not found.")
         print(ORIGINAL_FILE)
         return
 
-    # Create backup only if it doesn't already exist
+    # Create backup only if it doesn't exist
     if not BACKUP_FILE.exists():
 
         shutil.copy2(
@@ -78,8 +176,12 @@ def main():
 
         print("Original backup created.")
 
-    # Load original presentation
-    presentation = Presentation(str(ORIGINAL_FILE))
+    # Always load the untouched original
+    presentation = Presentation(
+        str(ORIGINAL_FILE)
+    )
+
+    total_picture_placeholders = 0
 
     for slide_number, slide in enumerate(
         presentation.slides,
@@ -90,14 +192,21 @@ def main():
 
         clear_text_placeholders(slide)
 
-        clear_picture_placeholders(slide)
+        count = clear_picture_placeholders(slide)
+
+        total_picture_placeholders += count
 
     # Save reusable template
     presentation.save(str(OUTPUT_FILE))
 
     print("\nCLEAN TEMPLATE CREATED SUCCESSFULLY")
 
-    print("Saved at:")
+    print(
+        "Total picture placeholders:",
+        total_picture_placeholders
+    )
+
+    print("\nSaved at:")
     print(OUTPUT_FILE)
 
 
