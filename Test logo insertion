@@ -1,70 +1,72 @@
+ 
 from pathlib import Path
+
 from pptx import Presentation
+from pptx.oxml.ns import qn
 
 
+# Project paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-TEMPLATE_FILE = (
-    BASE_DIR
-    / "templates"
-    / "company_one_pager_template.pptx"
-)
+TEMPLATE_FILE = BASE_DIR / "templates" / "company_one_pager_template.pptx"
+LOGO_FILE = BASE_DIR / "test_assets" / "test_logo.png"
+OUTPUT_FILE = BASE_DIR / "output" / "test_logo_insertion.pptx"
 
-LOGO_FILE = (
-    BASE_DIR
-    / "test_assets"
-    / "test_logo.png"
-)
 
-OUTPUT_FILE = (
-    BASE_DIR
-    / "output"
-    / "test_logo_insertion.pptx"
-)
 def main():
 
+    # Check required files
     if not TEMPLATE_FILE.exists():
-        print("Template not found:", TEMPLATE_FILE)
-        return
+        raise FileNotFoundError(f"Template not found: {TEMPLATE_FILE}")
 
     if not LOGO_FILE.exists():
-        print("Test logo not found:", LOGO_FILE)
-        return
+        raise FileNotFoundError(f"Logo not found: {LOGO_FILE}")
 
-    OUTPUT_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    presentation = Presentation(str(TEMPLATE_FILE))
+    # Load the clean template
+    prs = Presentation(str(TEMPLATE_FILE))
 
-    slide = presentation.slides[0]
+    slide = prs.slides[0]
 
     # Find the first picture placeholder
-    picture_placeholder = None
+    target_placeholder = None
 
     for shape in slide.shapes:
 
-        if not shape.is_placeholder:
-            continue
-
-        if shape.placeholder_format.type == 18:
-            picture_placeholder = shape
+        if (
+            shape.is_placeholder
+            and shape.placeholder_format.type == 18
+        ):
+            target_placeholder = shape
             break
 
-    if picture_placeholder is None:
-        print("No picture placeholder found.")
-        return
+    if target_placeholder is None:
+        raise ValueError("No picture placeholder found.")
 
-    print("Selected placeholder:", picture_placeholder.name)
+    print("Target placeholder:", target_placeholder.name)
+    print("Shape ID:", target_placeholder.shape_id)
 
-    # Insert image into the existing placeholder
-    picture_placeholder.insert_picture(str(LOGO_FILE))
+    # Add the new logo image to the slide
+    image_part, image_rid = slide.part.get_or_add_image_part(
+        str(LOGO_FILE)
+    )
 
-    presentation.save(str(OUTPUT_FILE))
+    # Replace the existing transparent image relationship
+    blip = target_placeholder.element.find(
+        ".//" + qn("a:blip")
+    )
 
-    print("\nTEST COMPLETED")
-    print("Saved:", OUTPUT_FILE)
+    if blip is None:
+        raise ValueError("Picture placeholder has no image element.")
+
+    blip.set(qn("r:embed"), image_rid)
+
+    # Save the test presentation
+    prs.save(str(OUTPUT_FILE))
+
+    print("\nLogo replacement completed.")
+    print("Output:", OUTPUT_FILE)
 
 
 if __name__ == "__main__":
