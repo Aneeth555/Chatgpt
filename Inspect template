@@ -3,7 +3,6 @@ from pathlib import Path
 
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.dml.color import RGBColor
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -11,185 +10,173 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ORIGINAL_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
 CLEAN_FILE = BASE_DIR / "templates" / "company_one_pager_template.pptx"
 
+REPORT_FILE = BASE_DIR / "output" / "template_inspection.txt"
+
 
 def get_color(font):
 
     try:
         if font.color.type is None:
-            return None
+            return "Inherited"
 
         if font.color.rgb:
             return str(font.color.rgb)
 
-        return f"Theme color: {font.color.theme_color}"
+        return f"Theme: {font.color.theme_color}"
 
-    except (AttributeError, TypeError, ValueError):
-        return "Inherited / Theme"
+    except Exception:
+        return "Inherited"
 
 
-def inspect_font(run):
+def inspect_font(run, report):
 
     font = run.font
 
-    print("      Run text:", repr(run.text))
-    print("      Font name:", font.name)
-    print("      Font size:", font.size.pt if font.size else None)
-    print("      Bold:", font.bold)
-    print("      Italic:", font.italic)
-    print("      Underline:", font.underline)
-    print("      Font color:", get_color(font))
+    report.write(f"      Text: {run.text!r}\n")
+    report.write(f"      Font: {font.name}\n")
+    report.write(
+        f"      Size: {font.size.pt if font.size else 'Inherited'}\n"
+    )
+    report.write(f"      Bold: {font.bold}\n")
+    report.write(f"      Italic: {font.italic}\n")
+    report.write(f"      Color: {get_color(font)}\n")
 
 
-def inspect_text_frame(shape):
-
-    if not shape.has_text_frame:
-        return
-
-    print("  TEXT:", repr(shape.text))
-
-    for p_index, paragraph in enumerate(shape.text_frame.paragraphs):
-
-        print(f"  Paragraph {p_index}:")
-        print("      Alignment:", paragraph.alignment)
-        print("      Level:", paragraph.level)
-        print("      Space before:", paragraph.space_before)
-        print("      Space after:", paragraph.space_after)
-
-        for run in paragraph.runs:
-            inspect_font(run)
-
-
-def inspect_shapes(presentation, template_name):
-
-    print("\n" + "=" * 75)
-    print(f"INSPECTING: {template_name}")
-    print("=" * 75)
+def inspect_shapes(presentation, report):
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
     ):
 
-        print(f"\n========== SLIDE {slide_number} ==========")
+        report.write(f"\n========== SLIDE {slide_number} ==========\n")
 
         for index, shape in enumerate(slide.shapes):
 
-            print("\n" + "-" * 60)
-            print(f"Shape position in collection: {index}")
-            print("Shape ID:", shape.shape_id)
-            print("Shape name:", shape.name)
-            print("Shape type:", shape.shape_type)
+            report.write("\n" + "-" * 55 + "\n")
 
-            print("Left:", shape.left)
-            print("Top:", shape.top)
-            print("Width:", shape.width)
-            print("Height:", shape.height)
+            report.write(f"Shape collection index: {index}\n")
+            report.write(f"Shape ID: {shape.shape_id}\n")
+            report.write(f"Shape name: {shape.name}\n")
+            report.write(f"Shape type: {shape.shape_type}\n")
+
+            report.write(f"Left: {shape.left}\n")
+            report.write(f"Top: {shape.top}\n")
+            report.write(f"Width: {shape.width}\n")
+            report.write(f"Height: {shape.height}\n")
 
             if shape.is_placeholder:
 
-                print("Is placeholder: YES")
-                print(
-                    "Placeholder type:",
-                    shape.placeholder_format.type
+                report.write("Placeholder: YES\n")
+                report.write(
+                    f"Placeholder type: {shape.placeholder_format.type}\n"
                 )
-                print(
-                    "Placeholder index:",
-                    shape.placeholder_format.idx
+                report.write(
+                    f"Placeholder index: {shape.placeholder_format.idx}\n"
                 )
 
                 if (
                     shape.placeholder_format.type
                     == PP_PLACEHOLDER.PICTURE
                 ):
-                    print("FIELD CATEGORY: PICTURE PLACEHOLDER")
-
+                    report.write("Category: PICTURE PLACEHOLDER\n")
                 else:
-                    print("FIELD CATEGORY: TEXT / OTHER PLACEHOLDER")
+                    report.write("Category: TEXT / OTHER PLACEHOLDER\n")
 
             else:
-                print("Is placeholder: NO")
+                report.write("Placeholder: NO\n")
 
             if shape.has_text_frame:
-                inspect_text_frame(shape)
 
-            if shape.shape_type == 13:
-                print("FIELD CATEGORY: PICTURE")
-                print("Image dimensions:", shape.width, shape.height)
+                report.write(f"Text: {shape.text!r}\n")
+
+                for p_index, paragraph in enumerate(
+                    shape.text_frame.paragraphs
+                ):
+
+                    report.write(f"  Paragraph {p_index}\n")
+                    report.write(
+                        f"  Alignment: {paragraph.alignment}\n"
+                    )
+
+                    for run in paragraph.runs:
+                        inspect_font(run, report)
 
 
-def inspect_layouts(presentation, template_name):
-
-    print("\n" + "=" * 75)
-    print(f"LAYOUT INSPECTION: {template_name}")
-    print("=" * 75)
+def inspect_layouts(presentation, report):
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
     ):
 
-        print(f"\nSLIDE {slide_number} LAYOUT")
+        report.write(
+            f"\n========== SLIDE {slide_number} LAYOUT ==========\n"
+        )
 
-        layout = slide.slide_layout
-
-        for shape in layout.shapes:
+        for shape in slide.slide_layout.shapes:
 
             if not shape.is_placeholder:
                 continue
 
-            print("\nLayout placeholder:", shape.name)
-            print("Shape ID:", shape.shape_id)
-            print("Placeholder type:", shape.placeholder_format.type)
-            print("Placeholder index:", shape.placeholder_format.idx)
-            print("Left:", shape.left)
-            print("Top:", shape.top)
-            print("Width:", shape.width)
-            print("Height:", shape.height)
-
-            if shape.has_text_frame:
-                print("Layout text:", repr(shape.text))
-
-                for paragraph in shape.text_frame.paragraphs:
-
-                    for run in paragraph.runs:
-                        inspect_font(run)
+            report.write("\nLAYOUT PLACEHOLDER\n")
+            report.write(f"Name: {shape.name}\n")
+            report.write(f"ID: {shape.shape_id}\n")
+            report.write(
+                f"Type: {shape.placeholder_format.type}\n"
+            )
+            report.write(
+                f"Index: {shape.placeholder_format.idx}\n"
+            )
+            report.write(f"Left: {shape.left}\n")
+            report.write(f"Top: {shape.top}\n")
+            report.write(f"Width: {shape.width}\n")
+            report.write(f"Height: {shape.height}\n")
+            report.write(f"Text: {shape.text!r}\n")
 
 
-def inspect_presentation(file_path, template_name):
+def inspect_presentation(file_path, name, report):
+
+    report.write("\n" + "=" * 75 + "\n")
+    report.write(f"TEMPLATE: {name}\n")
+    report.write(f"FILE: {file_path}\n")
+    report.write("=" * 75 + "\n")
 
     if not file_path.exists():
-        print(f"\nERROR: File not found: {file_path}")
+        report.write("ERROR: File not found.\n")
         return
 
     presentation = Presentation(str(file_path))
 
-    print("\n\n")
-    print("#" * 80)
-    print("TEMPLATE:", template_name)
-    print("FILE:", file_path)
-    print("SLIDE WIDTH:", presentation.slide_width)
-    print("SLIDE HEIGHT:", presentation.slide_height)
-    print("#" * 80)
+    report.write(f"Slide width: {presentation.slide_width}\n")
+    report.write(f"Slide height: {presentation.slide_height}\n")
 
-    inspect_shapes(presentation, template_name)
-    inspect_layouts(presentation, template_name)
+    inspect_shapes(presentation, report)
+    inspect_layouts(presentation, report)
 
 
 def main():
 
-    print("\nCOMPLETE ONE-PAGER TEMPLATE INSPECTION")
+    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Original: inspect original text and formatting
-    inspect_presentation(
-        ORIGINAL_FILE,
-        "ORIGINAL TEMPLATE"
-    )
+    with open(REPORT_FILE, "w", encoding="utf-8") as report:
 
-    # Clean: inspect reusable placeholders and positions
-    inspect_presentation(
-        CLEAN_FILE,
-        "CLEAN TEMPLATE"
-    )
+        report.write("ONE-PAGER TEMPLATE INSPECTION REPORT\n")
 
-    print("\n\n========== INSPECTION COMPLETED ==========")
+        inspect_presentation(
+            ORIGINAL_FILE,
+            "ORIGINAL TEMPLATE",
+            report
+        )
+
+        inspect_presentation(
+            CLEAN_FILE,
+            "CLEAN TEMPLATE",
+            report
+        )
+
+        report.write("\nINSPECTION COMPLETED\n")
+
+    print("Inspection completed.")
+    print(f"Report saved to:\n{REPORT_FILE}")
 
 
 if __name__ == "__main__":
