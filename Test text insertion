@@ -1,14 +1,14 @@
  
-import json
 from pathlib import Path
+import json
 
 from pptx import Presentation
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.text import MSO_AUTO_SIZE
 
 
-# ==================================================
+# ============================================================
 # 1. PROJECT PATHS
-# ==================================================
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -21,7 +21,7 @@ TEMPLATE_FILE = (
 JSON_FILE = (
     BASE_DIR
     / "output"
-    / "final_extraction.json"
+    / "final one pager.json"
 )
 
 OUTPUT_FILE = (
@@ -31,228 +31,254 @@ OUTPUT_FILE = (
 )
 
 
-# ==================================================
-# 2. TEXT PLACEHOLDER MAPPING
-# ==================================================
+# ============================================================
+# 2. PLACEHOLDER MAPPING
+# ============================================================
 
-COMPANY_MAPPING = {
-    "company_name": 62,
-    "overview": 64,
-    "headquarters": 67,
-    "employee_count": 95,
-    "funding": 65,
-    "revenue": 96,
+COMPANY_FIELDS = {
+    62: "company_name",
+    64: "overview",
+    67: "headquarters",
+    95: "employee_count",
+    65: "funding",
+    96: "revenue",
 }
 
-PRODUCT_MAPPING = {
-    "product_name": 80,
-    "description": 79,
-    "vertical_market": 81,
-    "training_hardware": 86,
-    "inference_hardware": 87,
-    "route_to_market": 88,
-    "deployment_type": 89,
-    "models": 90,
-    "ai_framework": 91,
-    "serving_framework": 92,
-    "additional_ai_software_stack": 94,
+PRODUCT_FIELDS = {
+    80: "product_name",
+    79: "description",
+    81: "vertical_market",
+    86: "training_hardware",
+    87: "inference_hardware",
+    88: "route_to_market",
+    89: "deployment_type",
+    90: "models",
+    91: "ai_framework",
+    92: "serving_framework",
+    94: "additional_ai_software_stack",
 }
 
 
-# ==================================================
+# ============================================================
 # 3. LOAD JSON DATA
-# ==================================================
+# ============================================================
 
-def load_json():
+def load_json_data():
 
     if not JSON_FILE.exists():
         raise FileNotFoundError(
             f"JSON file not found: {JSON_FILE}"
         )
 
-    with open(JSON_FILE, "r", encoding="utf-8") as file:
+    with open(
+        JSON_FILE,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
         data = json.load(file)
 
-    if not isinstance(data, dict):
-        raise ValueError("JSON root must be an object.")
+    company_data = data.get("company", {})
+    product_data = data.get("product", {})
 
-    company = data.get("company", {})
-    product = data.get("product", {})
+    if not isinstance(company_data, dict):
+        raise ValueError(
+            "The company section must be a JSON object."
+        )
 
-    if not isinstance(company, dict):
-        raise ValueError("'company' must be a JSON object.")
+    if not isinstance(product_data, dict):
+        raise ValueError(
+            "The product section must be a JSON object."
+        )
 
-    if not isinstance(product, dict):
-        raise ValueError("'product' must be a JSON object.")
-
-    return company, product
+    return company_data, product_data
 
 
-# ==================================================
+# ============================================================
 # 4. FIND PLACEHOLDER
-# ==================================================
+# ============================================================
 
-def find_placeholder(slide, placeholder_index):
+def get_placeholder(slide, placeholder_index):
 
     for shape in slide.shapes:
 
         if not shape.is_placeholder:
             continue
 
-        if (
-            shape.placeholder_format.type
-            == PP_PLACEHOLDER.PICTURE
-        ):
-            continue
-
-        if (
-            shape.placeholder_format.idx
-            == placeholder_index
-        ):
+        if shape.placeholder_format.idx == placeholder_index:
             return shape
+
+    print(
+        f"WARNING: Placeholder {placeholder_index} not found."
+    )
 
     return None
 
 
-# ==================================================
+# ============================================================
 # 5. INSERT TEXT
-# ==================================================
+# ============================================================
 
-def insert_text(slide, field_name, value, placeholder_index):
+def insert_text(slide, placeholder_index, value):
 
     if value is None:
-        print(f"SKIPPED: {field_name} (null)")
         return
 
     value = str(value).strip()
 
     if not value:
-        print(f"SKIPPED: {field_name} (empty)")
         return
 
-    shape = find_placeholder(
+    shape = get_placeholder(
         slide,
         placeholder_index
     )
 
     if shape is None:
-        print(
-            f"WARNING: Placeholder {placeholder_index} "
-            f"not found for {field_name}"
-        )
         return
 
     if not shape.has_text_frame:
-        print(f"WARNING: No text frame for {field_name}")
+        print(
+            f"WARNING: Placeholder {placeholder_index} "
+            "does not have a text frame."
+        )
         return
 
-    paragraph = shape.text_frame.paragraphs[0]
+    text_frame = shape.text_frame
 
-    if paragraph.runs:
+    # Remove existing instructional/sample text
+    text_frame.clear()
 
-        # Reuse the existing first run
-        paragraph.runs[0].text = value
+    # Insert new content
+    paragraph = text_frame.paragraphs[0]
+    paragraph.text = value
 
-        # Remove additional runs
-        for extra_run in list(paragraph.runs[1:]):
-            extra_run._r.getparent().remove(extra_run._r)
-
-    else:
-
-        # Add text to the existing placeholder paragraph
-        paragraph.add_run().text = value
+    # Preserve the template's text-fitting behaviour
+    text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
     print(
-        f"INSERTED: {field_name} "
-        f"-> Placeholder {placeholder_index}"
+        f"Inserted text into placeholder {placeholder_index}"
     )
 
 
-# ==================================================
-# 6. POPULATE COMPANY FIELDS
-# ==================================================
+# ============================================================
+# 6. INSERT COMPANY INFORMATION
+# ============================================================
 
-def populate_company_fields(slide, company):
+def insert_company_information(slide, company_data):
 
     print("\n========== COMPANY INFORMATION ==========")
 
-    for field_name, placeholder_index in COMPANY_MAPPING.items():
+    for placeholder_index, json_key in COMPANY_FIELDS.items():
 
-        value = company.get(field_name)
+        value = company_data.get(json_key)
+
+        if value is None or str(value).strip() == "":
+            print(
+                f"Skipped placeholder {placeholder_index}: "
+                f"{json_key} is empty."
+            )
+            continue
 
         insert_text(
             slide,
-            field_name,
-            value,
-            placeholder_index
+            placeholder_index,
+            value
         )
 
 
-# ==================================================
-# 7. POPULATE PRODUCT FIELDS
-# ==================================================
+# ============================================================
+# 7. INSERT PRODUCT INFORMATION
+# ============================================================
 
-def populate_product_fields(slide, product):
+def insert_product_information(slide, product_data):
 
     print("\n========== PRODUCT INFORMATION ==========")
 
-    for field_name, placeholder_index in PRODUCT_MAPPING.items():
+    for placeholder_index, json_key in PRODUCT_FIELDS.items():
 
-        value = product.get(field_name)
+        value = product_data.get(json_key)
+
+        if value is None or str(value).strip() == "":
+            print(
+                f"Skipped placeholder {placeholder_index}: "
+                f"{json_key} is empty."
+            )
+            continue
 
         insert_text(
             slide,
-            field_name,
-            value,
-            placeholder_index
+            placeholder_index,
+            value
         )
 
 
-# ==================================================
-# 8. MAIN FUNCTION
-# ==================================================
+# ============================================================
+# 8. GENERATE POWERPOINT
+# ============================================================
 
-def main():
+def generate_presentation():
 
-    print("Starting text insertion...")
+    print("\n========================================")
+    print("ONE-PAGER TEXT INSERTION")
+    print("========================================")
 
-    company, product = load_json()
-
+    # Check template
     if not TEMPLATE_FILE.exists():
         raise FileNotFoundError(
             f"Template not found: {TEMPLATE_FILE}"
         )
 
+    # Load JSON
+    company_data, product_data = load_json_data()
+
+    # Load clean PowerPoint template
+    presentation = Presentation(
+        str(TEMPLATE_FILE)
+    )
+
+    if len(presentation.slides) == 0:
+        raise ValueError(
+            "The PowerPoint template contains no slides."
+        )
+
+    slide = presentation.slides[0]
+
+    # Insert company details
+    insert_company_information(
+        slide,
+        company_data
+    )
+
+    # Insert product details
+    insert_product_information(
+        slide,
+        product_data
+    )
+
+    # Create output folder if necessary
     OUTPUT_FILE.parent.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    presentation = Presentation(
-        str(TEMPLATE_FILE)
-    )
-
-    slide = presentation.slides[0]
-
-    populate_company_fields(
-        slide,
-        company
-    )
-
-    populate_product_fields(
-        slide,
-        product
-    )
-
+    # Save editable PowerPoint
     presentation.save(
         str(OUTPUT_FILE)
     )
 
     print("\n========================================")
-    print("TEXT INSERTION COMPLETED")
+    print("POWERPOINT GENERATION COMPLETED")
     print("========================================")
-    print("Output:", OUTPUT_FILE)
 
+    print("Output file:")
+    print(OUTPUT_FILE)
+
+
+# ============================================================
+# 9. MAIN
+# ============================================================
 
 if __name__ == "__main__":
-    main()
+
+    generate_presentation()
