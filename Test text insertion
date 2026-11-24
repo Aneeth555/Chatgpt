@@ -1,4 +1,5 @@
  
+import json
 from pathlib import Path
 
 from pptx import Presentation
@@ -17,6 +18,12 @@ TEMPLATE_FILE = (
     / "company_one_pager_template.pptx"
 )
 
+JSON_FILE = (
+    BASE_DIR
+    / "output"
+    / "final_extraction.json"
+)
+
 OUTPUT_FILE = (
     BASE_DIR
     / "output"
@@ -25,25 +32,64 @@ OUTPUT_FILE = (
 
 
 # ==================================================
-# 2. TEST DATA
+# 2. TEXT PLACEHOLDER MAPPING
 # ==================================================
 
-TEST_DATA = {
-    "company_name": "TEST COMPANY"
-}
-
-
-# ==================================================
-# 3. TEXT PLACEHOLDER MAPPING
-# ==================================================
-
-TEXT_FIELD_MAPPING = {
+COMPANY_MAPPING = {
     "company_name": 62,
+    "overview": 64,
+    "headquarters": 67,
+    "employee_count": 95,
+    "funding": 65,
+    "revenue": 96,
+}
+
+PRODUCT_MAPPING = {
+    "product_name": 80,
+    "description": 79,
+    "vertical_market": 81,
+    "training_hardware": 86,
+    "inference_hardware": 87,
+    "route_to_market": 88,
+    "deployment_type": 89,
+    "models": 90,
+    "ai_framework": 91,
+    "serving_framework": 92,
+    "additional_ai_software_stack": 94,
 }
 
 
 # ==================================================
-# 4. FIND TEXT PLACEHOLDER
+# 3. LOAD JSON DATA
+# ==================================================
+
+def load_json():
+
+    if not JSON_FILE.exists():
+        raise FileNotFoundError(
+            f"JSON file not found: {JSON_FILE}"
+        )
+
+    with open(JSON_FILE, "r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON root must be an object.")
+
+    company = data.get("company", {})
+    product = data.get("product", {})
+
+    if not isinstance(company, dict):
+        raise ValueError("'company' must be a JSON object.")
+
+    if not isinstance(product, dict):
+        raise ValueError("'product' must be a JSON object.")
+
+    return company, product
+
+
+# ==================================================
+# 4. FIND PLACEHOLDER
 # ==================================================
 
 def find_placeholder(slide, placeholder_index):
@@ -69,12 +115,20 @@ def find_placeholder(slide, placeholder_index):
 
 
 # ==================================================
-# 5. INSERT TEXT WHILE PRESERVING FORMATTING
+# 5. INSERT TEXT
 # ==================================================
 
-def insert_text(slide, field_name, value):
+def insert_text(slide, field_name, value, placeholder_index):
 
-    placeholder_index = TEXT_FIELD_MAPPING[field_name]
+    if value is None:
+        print(f"SKIPPED: {field_name} (null)")
+        return
+
+    value = str(value).strip()
+
+    if not value:
+        print(f"SKIPPED: {field_name} (empty)")
+        return
 
     shape = find_placeholder(
         slide,
@@ -82,55 +136,87 @@ def insert_text(slide, field_name, value):
     )
 
     if shape is None:
-        raise ValueError(
-            f"Placeholder not found: {placeholder_index}"
+        print(
+            f"WARNING: Placeholder {placeholder_index} "
+            f"not found for {field_name}"
         )
+        return
 
     if not shape.has_text_frame:
-        raise ValueError(
-            f"Placeholder has no text frame: {field_name}"
-        )
+        print(f"WARNING: No text frame for {field_name}")
+        return
 
-    text_frame = shape.text_frame
-
-    paragraph = text_frame.paragraphs[0]
+    paragraph = shape.text_frame.paragraphs[0]
 
     if paragraph.runs:
 
         # Reuse the existing first run
-        # This preserves its font formatting
+        paragraph.runs[0].text = value
 
-        first_run = paragraph.runs[0]
-
-        first_run.text = str(value)
-
-        # Remove additional runs if present
+        # Remove additional runs
         for extra_run in list(paragraph.runs[1:]):
-
-            extra_run._r.getparent().remove(
-                extra_run._r
-            )
+            extra_run._r.getparent().remove(extra_run._r)
 
     else:
 
-        # No existing run is available.
-        # Add a run using inherited placeholder formatting.
+        # Add text to the existing placeholder paragraph
+        paragraph.add_run().text = value
 
-        run = paragraph.add_run()
-        run.text = str(value)
-
-    print("\nText inserted successfully")
-    print("Field:", field_name)
-    print("Value:", value)
-    print("Placeholder index:", placeholder_index)
-    print("Shape name:", shape.name)
+    print(
+        f"INSERTED: {field_name} "
+        f"-> Placeholder {placeholder_index}"
+    )
 
 
 # ==================================================
-# 6. MAIN FUNCTION
+# 6. POPULATE COMPANY FIELDS
+# ==================================================
+
+def populate_company_fields(slide, company):
+
+    print("\n========== COMPANY INFORMATION ==========")
+
+    for field_name, placeholder_index in COMPANY_MAPPING.items():
+
+        value = company.get(field_name)
+
+        insert_text(
+            slide,
+            field_name,
+            value,
+            placeholder_index
+        )
+
+
+# ==================================================
+# 7. POPULATE PRODUCT FIELDS
+# ==================================================
+
+def populate_product_fields(slide, product):
+
+    print("\n========== PRODUCT INFORMATION ==========")
+
+    for field_name, placeholder_index in PRODUCT_MAPPING.items():
+
+        value = product.get(field_name)
+
+        insert_text(
+            slide,
+            field_name,
+            value,
+            placeholder_index
+        )
+
+
+# ==================================================
+# 8. MAIN FUNCTION
 # ==================================================
 
 def main():
+
+    print("Starting text insertion...")
+
+    company, product = load_json()
 
     if not TEMPLATE_FILE.exists():
         raise FileNotFoundError(
@@ -142,34 +228,30 @@ def main():
         exist_ok=True
     )
 
-    print("Loading clean PowerPoint template...")
-
     presentation = Presentation(
         str(TEMPLATE_FILE)
     )
 
     slide = presentation.slides[0]
 
-    print("Inserting test data...")
+    populate_company_fields(
+        slide,
+        company
+    )
 
-    for field_name, value in TEST_DATA.items():
-
-        insert_text(
-            slide,
-            field_name,
-            value
-        )
-
-    print("\nSaving generated presentation...")
+    populate_product_fields(
+        slide,
+        product
+    )
 
     presentation.save(
         str(OUTPUT_FILE)
     )
 
-    print("\n================================")
-    print("TEXT INSERTION TEST COMPLETED")
-    print("================================")
-    print("Output file:", OUTPUT_FILE)
+    print("\n========================================")
+    print("TEXT INSERTION COMPLETED")
+    print("========================================")
+    print("Output:", OUTPUT_FILE)
 
 
 if __name__ == "__main__":
