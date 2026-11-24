@@ -1,138 +1,349 @@
-import json
+ import json
 import re
 import requests
 
 from schemas.one_pager_schema import OnePagerExtraction
-from schemas.field_definitions import get_field_definitions
+from schemas.field_definitions import (
+    get_field_definitions,
+    get_field_definition
+)
 from llm.ollama_client import MODEL_NAME
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
 REQUEST_TIMEOUT = 300
-
 NUM_PREDICT = 512
 
-# Extract one field at a time from its own passages.
 USE_FIELD_BY_FIELD = True
 
 WINDOW_SIZE = 700
 WINDOW_OVERLAP = 150
 TOP_WINDOWS_PER_FIELD = 3
 
-NAME_FIELDS = {"company_name", "product_name"}
-
-
-# ============================================================
-# HINTS USED ONLY TO FIND PASSAGES (never sent to the model)
-# A trailing * means "word starts with".
-# ============================================================
-
-QUESTIONNAIRE_HINTS = {
-    "overview": ["company", "we are", "is building", "mission",
-                 "platform", "foundational", "product details",
-                 "use case", "about"],
-    "headquarters": ["headquarter*", "head office", "based in",
-                     "located", "hq", "address", "city", "country"],
-    "employee_count": ["employee*", "headcount", "team size", "staff",
-                       "company size", "people"],
-    "funding": ["funding", "raised", "investment", "seed", "series",
-                "investor*", "capital"],
-    "revenue": ["revenue", "arr", "turnover", "sales", "income"],
-    "gtm_partners": ["partner*", "reseller*", "distributor*", "channel",
-                     "alliance*", "integrator*"],
-    "key_customers": ["customer*", "client*", "case stud*",
-                      "deployed at", "used by", "users include"],
-    "competitors": ["competitor*", "alternative*", "competing",
-                    "competition", "versus", "similar to"],
-    "description": ["product", "use case", "platform", "solution",
-                    "details", "optimi*", "capabilit*", "features"],
-    "vertical_market": ["industr*", "vertical*", "health*", "education",
-                        "learning", "finance", "retail", "sector*",
-                        "domain", "use case"],
-    "route_to_market": ["go-to-market", "route to market", "sales",
-                        "channel", "pricing", "subscription",
-                        "reseller*", "direct", "distribution",
-                        "partner*"],
-    "inference_hardware": ["inference", "cpu*", "gpu*", "instance*",
-                           "hardware", "h/w", "xeon", "accelerator*",
-                           "server*"],
-    "deployment_type": ["on premise", "on-premise", "on-prem", "cloud",
-                        "edge", "csp", "aws", "gcp", "azure", "hybrid",
-                        "deploy*"],
-    "training_hardware": ["training", "gpu*", "tpu*", "hardware", "h/w",
-                          "instance*", "accelerator*"],
-    "models": ["topolog*", "model*", "architecture*", "network*",
-               "params", "parameters", "adapter*", "llm*"],
-    "ai_framework": ["framework*", "librar*", "training / research",
-                     "training", "research", "fine-tun*"],
-    "serving_framework": ["serving", "serve", "optimization",
-                          "optimisation", "runtime", "inference",
-                          "framework*", "deployment target"],
-    "additional_ai_software_stack": ["tools", "librar*", "database*",
-                                     "streaming", "mlops", "pipeline*",
-                                     "vector", "graph", "observability",
-                                     "stack", "data /"]
+NAME_FIELDS = {
+    "company_name",
+    "product_name"
 }
 
 
-# ============================================================
-# FIELD INSTRUCTIONS (no source_guidance: it describes web
-# sources and is useless for a questionnaire)
-# ============================================================
+QUESTIONNAIRE_HINTS = {
+    "company_name": [
+        "company name",
+        "organization name",
+        "business name"
+    ],
 
-def build_instruction(definition):
+    "overview": [
+        "company overview",
+        "about company",
+        "company description",
+        "what does the company do"
+    ],
 
-    parts = [
-        ("What to extract", definition.get("what_to_extract", "")),
-        ("What NOT to extract", definition.get("what_not_to_extract", "")),
-        ("Answer format", definition.get("answer_format", ""))
+    "headquarters": [
+        "headquarters",
+        "company location",
+        "head office",
+        "headquartered"
+    ],
+
+    "employee_count": [
+        "employee count",
+        "number of employees",
+        "team size",
+        "workforce"
+    ],
+
+    "funding": [
+        "funding",
+        "investment",
+        "funding stage",
+        "investors"
+    ],
+
+    "revenue": [
+        "revenue",
+        "annual revenue",
+        "turnover",
+        "valuation"
+    ],
+
+    "gtm_partners": [
+        "gtm partners",
+        "go to market partners",
+        "technology partners",
+        "strategic partners"
+    ],
+
+    "key_customers": [
+        "key customers",
+        "clients",
+        "customers",
+        "customer base"
+    ],
+
+    "competitors": [
+        "competitors",
+        "competition",
+        "competing products"
+    ],
+
+    "product_name": [
+        "product name",
+        "solution name",
+        "platform name"
+    ],
+
+    "description": [
+        "product description",
+        "solution description",
+        "product functionality",
+        "key features",
+        "key benefits"
+    ],
+
+    "vertical_market": [
+        "vertical market",
+        "target market",
+        "industry",
+        "industries served",
+        "target industries"
+    ],
+
+    "route_to_market": [
+        "route to market",
+        "sales channel",
+        "distribution channel",
+        "go to market strategy"
+    ],
+
+    "inference_hardware": [
+        "inference hardware",
+        "inference processor",
+        "inference accelerator",
+        "hardware used for inference",
+        "processor sku"
+    ],
+
+    "deployment_type": [
+        "deployment type",
+        "deployment model",
+        "cloud deployment",
+        "on premise",
+        "on-premises"
+    ],
+
+    "training_hardware": [
+        "training hardware",
+        "training processor",
+        "training accelerator",
+        "hardware used for training"
+    ],
+
+    "models": [
+        "ai models",
+        "machine learning models",
+        "foundation models",
+        "llm models",
+        "model architecture"
+    ],
+
+    "ai_framework": [
+        "ai framework",
+        "machine learning framework",
+        "deep learning framework",
+        "frameworks used"
+    ],
+
+    "serving_framework": [
+        "serving framework",
+        "inference framework",
+        "model serving",
+        "inference runtime"
+    ],
+
+    "additional_ai_software_stack": [
+        "software stack",
+        "ai software stack",
+        "libraries",
+        "toolchains",
+        "runtimes",
+        "additional technologies"
     ]
+}
+# ---------------------------------------------------------
+# FIELD-SPECIFIC EXTRACTION INSTRUCTIONS
+# ---------------------------------------------------------
 
-    return "\n".join(
-        f"- {label}: {text}" for label, text in parts if text
+def build_instruction(field_name, definition):
+    """
+    Build concise extraction instructions for each one-pager field.
+    """
+
+    base_instruction = (
+        f"Extract information for the field '{field_name}'.\n"
+        f"What to extract: {definition.get('what_to_extract', '')}\n"
+        f"What not to extract: {definition.get('what_not_to_extract', '')}\n"
+        f"Required answer format: {definition.get('answer_format', '')}\n"
+    )
+
+    formatting_rules = {
+        "overview": (
+            "Write 2-4 concise sentences describing the company's "
+            "business, core offerings and primary focus."
+        ),
+
+        "description": (
+            "Write 2-4 concise sentences explaining the product's "
+            "purpose, core functionality and key benefits. "
+            "Avoid marketing language and repeated information."
+        ),
+
+        "vertical_market": (
+            "Return only the relevant industries or market sectors "
+            "as a short comma-separated list."
+        ),
+
+        "route_to_market": (
+            "Summarize the actual sales and distribution channels "
+            "in one concise sentence or phrase."
+        ),
+
+        "inference_hardware": (
+            "Return a compact list of inference hardware. "
+            "Preserve exact processor, accelerator, SKU and "
+            "important specifications. Do not confuse training "
+            "hardware with inference hardware."
+        ),
+
+        "training_hardware": (
+            "Return a compact list of training hardware. "
+            "Preserve exact processor, accelerator, SKU and "
+            "important specifications. Do not confuse inference "
+            "hardware with training hardware."
+        ),
+
+        "deployment_type": (
+            "Return only the supported deployment options, "
+            "such as cloud, on-premises, hybrid or edge."
+        ),
+
+        "models": (
+            "Return exact AI model names, architectures and "
+            "versions as a compact comma-separated list. "
+            "Do not add lengthy model explanations."
+        ),
+
+        "ai_framework": (
+            "Return only the names of AI and machine-learning "
+            "frameworks or libraries as a compact list."
+        ),
+
+        "serving_framework": (
+            "Return exact model-serving, inference-framework "
+            "and runtime names as a compact list."
+        ),
+
+        "additional_ai_software_stack": (
+            "Return supporting AI software, libraries, runtimes "
+            "and toolchains as a compact list. Avoid repeating "
+            "items already listed in other fields."
+        ),
+
+        "employee_count": (
+            "Return the employee count or supported employee range. "
+            "Preserve units and qualifiers."
+        ),
+
+        "funding": (
+            "Return the funding stage, funding amount and relevant "
+            "investment details when available."
+        ),
+
+        "revenue": (
+            "Return revenue or valuation information only when "
+            "explicitly supported. Preserve currency, period and units."
+        ),
+
+        "gtm_partners": (
+            "Return the names of relevant go-to-market, technology "
+            "or strategic partners as a compact list."
+        ),
+
+        "key_customers": (
+            "Return the names of key customers as a compact list."
+        ),
+
+        "competitors": (
+            "Return the names of relevant competitors as a compact list."
+        ),
+
+        "headquarters": (
+            "Return the company's headquarters location, "
+            "including city and country when available."
+        )
+    }
+
+    specific_instruction = formatting_rules.get(
+        field_name,
+        "Provide a concise answer containing only relevant facts."
+    )
+
+    return (
+        base_instruction
+        + "\nAdditional formatting instructions:\n"
+        + specific_instruction
+        + "\n\n"
+        + "Important rules:\n"
+        + "- Do not invent or assume information.\n"
+        + "- Preserve exact names, numbers, SKUs and versions.\n"
+        + "- Preserve currency, units and relevant qualifiers.\n"
+        + "- Distinguish existing capabilities from planned capabilities.\n"
+        + "- Avoid unnecessary explanations and repeated information.\n"
+        + "- If the source does not contain the answer, return null.\n"
     )
 
 
-# ============================================================
-# NORMALIZE NULL VALUES / FIT THE SCHEMA
-# ============================================================
+# ---------------------------------------------------------
+# NULL VALUE NORMALIZATION
+# ---------------------------------------------------------
 
 NULL_STRINGS = {
-    "", "null", "none", "n/a", "na", "not available", "not provided",
-    "not specified", "unknown", "string", "not found",
-    "extracted answer", "extracted answer or null"
+    "",
+    "null",
+    "none",
+    "n/a",
+    "na",
+    "not available",
+    "not disclosed",
+    "not specified",
+    "unknown",
+    "not found"
 }
 
 
 def normalize_null_values(data):
-    """Convert empty strings and placeholder text into None."""
+    """
+    Convert common empty or unavailable values into None.
+    """
 
     if isinstance(data, dict):
-
         return {
             key: normalize_null_values(value)
             for key, value in data.items()
         }
 
     if isinstance(data, list):
-
-        items = [normalize_null_values(value) for value in data]
-
-        return [item for item in items if item is not None]
+        return [
+            normalize_null_values(item)
+            for item in data
+        ]
 
     if isinstance(data, str):
-
         cleaned = data.strip()
 
-        if cleaned.lower().strip(".") in NULL_STRINGS:
-            return None
-
-        if " or null" in cleaned.lower():
+        if cleaned.lower() in NULL_STRINGS:
             return None
 
         return cleaned
@@ -140,608 +351,1161 @@ def normalize_null_values(data):
     return data
 
 
-# ============================================================
-# TEXT HELPERS AND ANSWER CHECKS
-# ============================================================
+# ---------------------------------------------------------
+# TEXT NORMALIZATION
+# ---------------------------------------------------------
 
 def normalize_text(text):
-    """Lowercase, remove punctuation, collapse whitespace."""
+    """
+    Normalize text for evidence matching.
+    """
 
     if not text:
         return ""
 
     text = str(text).lower()
-    text = re.sub(r"[^\w\s]", " ", text)
 
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
 
+    text = re.sub(
+        r"[^\w\s.$%+-]",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+# ---------------------------------------------------------
+# FIELDS THAT ALLOW CONCISE PARAPHRASING
+# ---------------------------------------------------------
 
 SUMMARY_FIELDS = {
-    "overview", "description", "route_to_market",
-    "vertical_market", "deployment_type"
+    "overview",
+    "description",
+    "route_to_market",
+    "vertical_market",
+    "deployment_type"
 }
+
+
+# ---------------------------------------------------------
+# COMMON WORDS IGNORED DURING EVIDENCE MATCHING
+# ---------------------------------------------------------
 
 STOPWORDS = {
-    "the", "and", "for", "with", "that", "this", "from", "are",
-    "was", "were", "has", "have", "its", "their", "into", "using",
-    "used", "also", "such", "can", "will", "which", "other", "more"
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "with",
+    "by",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "that",
+    "this",
+    "these",
+    "those",
+    "as",
+    "at",
+    "from",
+    "its",
+    "their",
+    "it",
+    "which",
+    "can",
+    "could",
+    "will",
+    "would",
+    "has",
+    "have",
+    "had"
 }
-
+# ---------------------------------------------------------
+# ANSWER GROUNDING VALIDATION
+# ---------------------------------------------------------
 
 def answer_is_grounded(answer, source_text, field_name):
     """
-    The answer may only contain facts that exist in the source.
-
-    - every number must appear in the source
-    - 60% of the answer words (40% for summary fields) must appear
+    Check whether an extracted answer is sufficiently supported
+    by the supplied source text.
     """
 
-    source_norm = normalize_text(source_text)
-    source_compact = source_norm.replace(" ", "")
-    source_words = set(source_norm.split())
+    if answer is None:
+        return True
 
-    for number in re.findall(r"\d[\d,.]*", str(answer)):
+    if not source_text:
+        return False
 
-        digits = re.sub(r"[^0-9]", "", number)
+    answer = str(answer).strip()
 
-        if digits and digits not in source_compact:
+    if not answer:
+        return True
+
+    normalized_answer = normalize_text(answer)
+    normalized_source = normalize_text(source_text)
+
+    if not normalized_answer or not normalized_source:
+        return False
+
+    # -----------------------------------------------------
+    # Check numeric values.
+    # -----------------------------------------------------
+
+    answer_numbers = re.findall(
+        r"\b\d+(?:[.,]\d+)*(?:\s?%|\s?(?:million|billion|thousand|k|m|bn))?\b",
+        answer.lower()
+    )
+
+    source_numbers = re.findall(
+        r"\b\d+(?:[.,]\d+)*(?:\s?%|\s?(?:million|billion|thousand|k|m|bn))?\b",
+        source_text.lower()
+    )
+
+    normalized_source_numbers = {
+        re.sub(r"\s+", "", number)
+        for number in source_numbers
+    }
+
+    for number in answer_numbers:
+        normalized_number = re.sub(
+            r"\s+",
+            "",
+            number
+        )
+
+        if normalized_number not in normalized_source_numbers:
             return False
 
-    words = [
-        word for word in normalize_text(answer).split()
-        if len(word) >= 3 and word not in STOPWORDS
-    ]
+    # -----------------------------------------------------
+    # Check meaningful word overlap.
+    # -----------------------------------------------------
 
-    if not words:
+    answer_words = {
+        word
+        for word in normalized_answer.split()
+        if len(word) > 2 and word not in STOPWORDS
+    }
+
+    source_words = {
+        word
+        for word in normalized_source.split()
+        if len(word) > 2 and word not in STOPWORDS
+    }
+
+    if not answer_words:
         return True
 
-    found = sum(1 for word in words if word in source_words)
+    matching_words = answer_words.intersection(source_words)
 
-    threshold = 0.4 if field_name in SUMMARY_FIELDS else 0.6
+    overlap = len(matching_words) / len(answer_words)
 
-    return found / len(words) >= threshold
+    # Summary fields may contain reasonable paraphrasing.
+    if field_name in SUMMARY_FIELDS:
+        return overlap >= 0.40
 
+    return overlap >= 0.60
+
+
+# ---------------------------------------------------------
+# EVIDENCE VERIFICATION
+# ---------------------------------------------------------
 
 def evidence_found(evidence, text):
-    """Evidence must come from the passages (punctuation ignored)."""
+    """
+    Check whether the evidence is present in the source text.
+    """
 
-    evidence_norm = normalize_text(evidence)
-    text_norm = normalize_text(text)
-
-    if not evidence_norm or not text_norm:
+    if not evidence or not text:
         return False
 
-    if evidence_norm in text_norm:
+    normalized_evidence = normalize_text(evidence)
+    normalized_text = normalize_text(text)
+
+    if not normalized_evidence or not normalized_text:
+        return False
+
+    # Exact normalized match.
+    if normalized_evidence in normalized_text:
         return True
 
-    words = evidence_norm.split()
+    # Fallback: compare meaningful words.
+    evidence_words = {
+        word
+        for word in normalized_evidence.split()
+        if len(word) > 2 and word not in STOPWORDS
+    }
 
-    if len(words) < 3:
+    text_words = {
+        word
+        for word in normalized_text.split()
+        if len(word) > 2 and word not in STOPWORDS
+    }
+
+    if len(evidence_words) < 3:
         return False
 
-    text_words = set(text_norm.split())
+    overlap = (
+        len(evidence_words.intersection(text_words))
+        / len(evidence_words)
+    )
 
-    return sum(1 for w in words if w in text_words) / len(words) >= 0.85
+    return overlap >= 0.85
 
 
-# ============================================================
-# OLLAMA API CALL
-# ============================================================
+# ---------------------------------------------------------
+# OLLAMA CONTEXT SIZE
+# ---------------------------------------------------------
 
-def choose_context_size(messages, num_predict):
+def choose_context_size(text):
     """
-    Pick num_ctx from the real prompt length. A fixed 8192 window
-    made Ollama silently drop part of the prompt.
+    Select a context window based on the supplied text length.
     """
 
-    characters = sum(len(message["content"]) for message in messages)
+    text_length = len(text or "")
 
-    needed = characters // 3 + num_predict + 512
+    if text_length <= 4000:
+        return 4096
 
-    for size in (8192, 16384, 32768):
-        if needed <= size:
-            return size
+    if text_length <= 10000:
+        return 8192
 
-    print(f"WARNING: very long prompt (~{needed} tokens).")
+    if text_length <= 20000:
+        return 16384
 
     return 32768
 
 
+# ---------------------------------------------------------
+# OLLAMA API CALL
+# ---------------------------------------------------------
+
 def call_ollama(
-    prompt,
-    output_schema,
+    messages,
+    response_format=None,
     num_predict=NUM_PREDICT,
-    system_prompt=None
+    retry_on_length=True
 ):
     """
-    Send a prompt to Ollama and request structured JSON output.
-    Retries once with more room if the output was cut off.
+    Send a request to the local Ollama chat API.
+
+    Returns the parsed assistant response.
     """
 
-    messages = []
+    context_text = "\n".join(
+        str(message.get("content", ""))
+        for message in messages
+    )
 
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+    options = {
+        "num_ctx": choose_context_size(context_text),
+        "num_predict": num_predict,
+        "temperature": 0
+    }
 
-    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "stream": False,
+        "options": options
+    }
 
-    content = ""
+    if response_format is not None:
+        payload["format"] = response_format
 
-    for attempt in range(2):
+    response = requests.post(
+        OLLAMA_URL,
+        json=payload,
+        timeout=REQUEST_TIMEOUT
+    )
 
-        payload = {
-            "model": MODEL_NAME,
-            "messages": messages,
-            "stream": False,
-            "format": output_schema,
-            "think": False,
-            "options": {
-                "temperature": 0,
-                "num_ctx": choose_context_size(messages, num_predict),
-                "num_predict": num_predict
-            }
-        }
+    response.raise_for_status()
 
-        try:
+    result = response.json()
 
-            response = requests.post(
-                OLLAMA_URL,
-                json=payload,
-                timeout=REQUEST_TIMEOUT
+    message = result.get("message", {})
+
+    content = message.get("content", "")
+
+    if not content:
+        raise ValueError(
+            "Ollama returned an empty response."
+        )
+
+    # Retry if the model response was truncated.
+    done_reason = result.get("done_reason")
+
+    if retry_on_length and done_reason == "length":
+        if num_predict < 2048:
+            return call_ollama(
+                messages=messages,
+                response_format=response_format,
+                num_predict=2048,
+                retry_on_length=False
             )
 
-            response.raise_for_status()
-
-            response_data = response.json()
-
-        except requests.exceptions.Timeout as error:
-
-            raise TimeoutError(
-                "Ollama request timed out. "
-                "Increase REQUEST_TIMEOUT."
-            ) from error
-
-        except requests.exceptions.RequestException as error:
-
-            raise RuntimeError(
-                f"Could not connect to Ollama: {error}"
-            ) from error
-
-        if response_data.get("done_reason") == "length" and attempt == 0:
-
-            num_predict = num_predict * 2
-            continue
-
-        content = response_data.get("message", {}).get("content", "")
-
-        break
-
-    if not content or not content.strip():
-        raise ValueError("Ollama returned an empty response.")
-
-    content = content.strip()
-    content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE)
-    content = re.sub(r"\s*```$", "", content)
-
-    try:
-
-        return json.loads(content)
-
-    except json.JSONDecodeError as error:
-
         raise ValueError(
-            f"Ollama did not return valid JSON. "
-            f"Response: {content[:500]}"
-        ) from error
+            "Ollama response was truncated. "
+            "Increase num_predict or reduce the input context."
+        )
 
+    return content
 
-# ============================================================
-# SPLIT THE QUESTIONNAIRE INTO PASSAGES
-# ============================================================
+# ---------------------------------------------------------
+# QUESTIONNAIRE TEXT SPLITTING
+# ---------------------------------------------------------
 
 MARKER = re.compile(
-    r"^-+\s*(slide|page|table)\s*\d+\s*-+$", re.IGNORECASE
+    r"(?m)^\s*(?:Q(?:uestion)?\s*)?\d+[\s.):\-]+"
 )
 
 
-def split_long_unit(unit, size, overlap):
-    """Cut one very long line at sentence boundaries."""
+def split_long_unit(
+    text,
+    window_size=WINDOW_SIZE,
+    overlap=WINDOW_OVERLAP
+):
+    """
+    Split a long text unit into smaller overlapping sections.
+    """
 
-    pieces = []
+    text = str(text or "").strip()
+
+    if not text:
+        return []
+
+    if len(text) <= window_size:
+        return [text]
+
+    chunks = []
+
     start = 0
 
-    while start < len(unit):
+    while start < len(text):
 
-        end = min(start + size, len(unit))
+        end = min(
+            start + window_size,
+            len(text)
+        )
 
-        if end < len(unit):
+        # Try to end at a sentence or word boundary.
+        if end < len(text):
 
-            cut = max(
-                unit.rfind(". ", start, end),
-                unit.rfind("? ", start, end),
-                unit.rfind("; ", start, end),
-                unit.rfind(" | ", start, end)
+            boundary = max(
+                text.rfind(". ", start, end),
+                text.rfind("\n", start, end),
+                text.rfind(" ", start, end)
             )
 
-            if cut > start + size // 2:
-                end = cut + 1
-            else:
-                space = unit.rfind(" ", start, end)
-                if space > start + size // 2:
-                    end = space
+            if boundary > start:
+                end = boundary + 1
 
-        piece = unit[start:end].strip()
+        chunk = text[start:end].strip()
 
-        if piece:
-            pieces.append(piece)
+        if chunk:
+            chunks.append(chunk)
 
-        if end >= len(unit):
+        if end >= len(text):
             break
 
-        start = max(end - overlap, start + 1)
+        start = max(
+            end - overlap,
+            start + 1
+        )
 
-    return pieces
+    return chunks
 
 
-def build_windows(text, size=WINDOW_SIZE, overlap=WINDOW_OVERLAP):
+def build_windows(text):
     """
-    Passages of about `size` characters. "question | answer" rows
-    stay together; rows with several merged questions are cut at
-    sentence boundaries.
+    Split questionnaire text into relevant windows.
+
+    Numbered questions are kept together where possible.
     """
 
-    pieces = []
+    text = str(text or "").strip()
 
-    for line in str(text).replace("\r", "\n").split("\n"):
+    if not text:
+        return []
 
-        line = line.strip()
+    markers = list(MARKER.finditer(text))
 
-        if not line or MARKER.match(line):
-            continue
+    units = []
 
-        if len(line) > size:
-            pieces.extend(split_long_unit(line, size, overlap))
-        else:
-            pieces.append(line)
+    if markers:
+
+        if markers[0].start() > 0:
+
+            introduction = text[
+                :markers[0].start()
+            ].strip()
+
+            if introduction:
+                units.append(introduction)
+
+        for index, marker in enumerate(markers):
+
+            start = marker.start()
+
+            if index + 1 < len(markers):
+                end = markers[index + 1].start()
+            else:
+                end = len(text)
+
+            unit = text[start:end].strip()
+
+            if unit:
+                units.append(unit)
+
+    else:
+        units = [text]
 
     windows = []
-    current = ""
 
-    for piece in pieces:
+    for unit in units:
 
-        if current and len(current) + len(piece) + 1 > size:
-            windows.append(current)
-            current = piece
-        else:
-            current = f"{current}\n{piece}" if current else piece
-
-    if current:
-        windows.append(current)
+        windows.extend(
+            split_long_unit(
+                unit,
+                window_size=WINDOW_SIZE,
+                overlap=WINDOW_OVERLAP
+            )
+        )
 
     return windows
 
 
-def hint_matches(hint, text_lower):
+# ---------------------------------------------------------
+# QUESTIONNAIRE FIELD HINT MATCHING
+# ---------------------------------------------------------
 
-    pattern = r"(?<![a-z0-9])" + re.escape(hint.rstrip("*").lower())
+def hint_matches(text, field_name):
+    """
+    Check whether a text passage contains hints related
+    to a particular one-pager field.
+    """
 
-    if not hint.endswith("*"):
-        pattern += r"(?![a-z0-9])"
+    normalized = normalize_text(text)
 
-    return re.search(pattern, text_lower) is not None
+    hints = QUESTIONNAIRE_HINTS.get(
+        field_name,
+        []
+    )
+
+    for hint in hints:
+
+        normalized_hint = normalize_text(hint)
+
+        if normalized_hint and normalized_hint in normalized:
+            return True
+
+    return False
 
 
-def find_field_windows(windows, field_name, top_k=TOP_WINDOWS_PER_FIELD):
-    """Best passages for one field as (score, text) pairs."""
+# ---------------------------------------------------------
+# FIND RELEVANT WINDOWS FOR A FIELD
+# ---------------------------------------------------------
 
-    hints = QUESTIONNAIRE_HINTS.get(field_name, [])
+def find_field_windows(
+    windows,
+    field_name,
+    top_k=TOP_WINDOWS_PER_FIELD
+):
+    """
+    Rank questionnaire windows based on their relevance
+    to a particular field.
+    """
 
-    scored = []
+    hints = QUESTIONNAIRE_HINTS.get(
+        field_name,
+        []
+    )
+
+    if not windows:
+        return []
+
+    ranked_windows = []
 
     for index, window in enumerate(windows):
 
-        text_lower = window.lower()
+        normalized_window = normalize_text(window)
 
-        score = sum(1 for hint in hints if hint_matches(hint, text_lower))
+        score = 0
+
+        for hint in hints:
+
+            normalized_hint = normalize_text(hint)
+
+            if normalized_hint in normalized_window:
+                score += 3
+
+            else:
+
+                hint_words = set(
+                    normalized_hint.split()
+                )
+
+                window_words = set(
+                    normalized_window.split()
+                )
+
+                if hint_words and hint_words.issubset(window_words):
+                    score += 2
 
         if score > 0:
-            scored.append((score, index, window))
 
-    scored.sort(key=lambda item: (-item[0], item[1]))
+            ranked_windows.append(
+                (
+                    score,
+                    index,
+                    window
+                )
+            )
 
-    return [(score, window) for score, _, window in scored[:top_k]]
+    # Prefer higher relevance scores.
+    ranked_windows.sort(
+        key=lambda item: (
+            item[0],
+            -item[1]
+        ),
+        reverse=True
+    )
 
+    selected = [
+        item[2]
+        for item in ranked_windows[:top_k]
+    ]
 
-# ============================================================
-# EXTRACT ONE FIELD FROM ITS PASSAGES
-# ============================================================
+    # If no matching hint is found, provide a small fallback
+    # selection rather than returning unrelated empty context.
+    if not selected:
+        selected = windows[:min(top_k, len(windows))]
+
+    return selected
+# ---------------------------------------------------------
+# FIELD ANSWER JSON SCHEMA
+# ---------------------------------------------------------
 
 FIELD_ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
-        "answer": {"type": ["string", "null"]},
-        "evidence": {"type": ["string", "null"]}
+        "answer": {
+            "type": ["string", "null"]
+        },
+        "evidence": {
+            "type": ["string", "null"]
+        }
     },
-    "required": ["answer", "evidence"],
+    "required": [
+        "answer",
+        "evidence"
+    ],
     "additionalProperties": False
 }
 
+
+# ---------------------------------------------------------
+# SYSTEM PROMPT
+# ---------------------------------------------------------
+
 SYSTEM_PROMPT = """
-You extract ONE field from a company questionnaire.
+You are an accurate information extraction assistant.
 
-RULES:
+Your task is to extract information for ONE specific
+company or product field from the supplied source passages.
 
-1. Use ONLY the supplied passages.
-2. Do not use outside knowledge.
-3. Never guess or invent. If the passages do not answer the field,
-   return null for answer and evidence.
-4. The field description and instructions explain what the field
-   means. They are NOT data. Never copy words from them into the
-   answer unless the same words appear in the passages.
-5. Copy names, numbers, currencies and units exactly as written.
-6. Questions and answers may be merged in the same text. Take only
-   the part that answers THIS field, nothing that answers a
-   different question.
-7. Keep current technologies separate from planned or target ones,
-   and keep that status in the answer.
-8. "evidence" must be a short exact excerpt copied from the
-   passages that directly supports the answer.
-9. Return valid JSON only.
+STRICT EXTRACTION RULES:
+
+1. Use only the information present in the supplied passages.
+
+2. Never use outside knowledge, assumptions or guesses.
+
+3. Do not invent company details, product capabilities,
+   customers, competitors, funding, revenue or technical details.
+
+4. Preserve exact:
+   - Company and product names
+   - Processor and accelerator names
+   - Hardware SKU identifiers
+   - AI model names and versions
+   - Framework and software names
+   - Numbers, percentages and measurements
+   - Currency and units
+
+5. Do not confuse:
+   - Training hardware with inference hardware
+   - AI frameworks with serving frameworks
+   - Current capabilities with planned capabilities
+   - Company information with product information
+
+6. Keep answers concise and suitable for a professional
+   one-page company and product presentation.
+
+7. Do not include introductory phrases such as:
+   "The company uses", "According to the source",
+   "The product provides" or "It is important to note".
+
+8. Do not repeat the same information unnecessarily.
+
+9. Do not remove important technical names, versions,
+   specifications or factual qualifiers merely to shorten
+   an answer.
+
+10. If the supplied passages do not contain sufficient
+    information to answer the field, return null.
+
+EVIDENCE RULES:
+
+1. Evidence must be copied from the supplied passages.
+2. Evidence must directly support the extracted answer.
+3. Do not create or paraphrase evidence.
+4. If the answer is null, evidence must also be null.
+
+OUTPUT RULES:
+
+Return only valid JSON matching the supplied schema.
+Do not include Markdown, explanations or additional keys.
 """
 
 
-def extract_one_field(
-    section,
-    field_name,
-    definition,
-    passages,
-    company_name,
-    product_name
-):
-    """Returns (answer, evidence, status)."""
+# ---------------------------------------------------------
+# PARSE FIELD RESPONSE
+# ---------------------------------------------------------
 
-    passages_text = "\n\n".join(
-        f"[PASSAGE {number}]\n{window}"
-        for number, (_, window) in enumerate(passages, start=1)
-    )
+def parse_field_response(response_text):
+    """
+    Parse and validate the JSON returned by Ollama.
+    """
 
-    prompt = f"""
-COMPANY: {company_name}
-PRODUCT: {product_name}
-
-SECTION: {section}
-FIELD NAME: {field_name}
-
-FIELD DESCRIPTION:
-{definition.get("description", "")}
-
-FIELD INSTRUCTIONS:
-{build_instruction(definition)}
-
-PASSAGES:
-{passages_text}
-
-Return a JSON object with the keys "answer" and "evidence".
-Use null for both when the passages do not answer this field.
-"""
-
-    try:
-
-        result = normalize_null_values(
-            call_ollama(
-                prompt=prompt,
-                output_schema=FIELD_ANSWER_SCHEMA,
-                num_predict=NUM_PREDICT,
-                system_prompt=SYSTEM_PROMPT
-            )
+    if not response_text:
+        raise ValueError(
+            "The model returned an empty response."
         )
 
-    except (ValueError, TimeoutError) as error:
+    try:
+        result = json.loads(response_text)
 
-        print(f"  Invalid response for {field_name}: {error}")
+    except json.JSONDecodeError as exc:
 
-        return None, None, "invalid_model_response"
+        raise ValueError(
+            "Ollama returned invalid JSON."
+        ) from exc
 
     if not isinstance(result, dict):
-        return None, None, "invalid_model_response"
+        raise ValueError(
+            "The extraction response must be a JSON object."
+        )
 
-    answer = result.get("answer")
-    evidence = result.get("evidence")
+    if "answer" not in result or "evidence" not in result:
+        raise ValueError(
+            "The response must contain answer and evidence."
+        )
 
-    if isinstance(answer, list):
-        answer = ", ".join(str(item) for item in answer if item)
+    answer = result["answer"]
+    evidence = result["evidence"]
 
-    if not isinstance(answer, str) or not answer.strip():
-        return None, None, "not_in_questionnaire"
+    if answer is not None and not isinstance(answer, str):
+        raise ValueError(
+            "The extracted answer must be a string or null."
+        )
 
-    passages_only = "\n".join(window for _, window in passages)
+    if evidence is not None and not isinstance(evidence, str):
+        raise ValueError(
+            "The evidence must be a string or null."
+        )
 
-    if not isinstance(evidence, str) or not evidence_found(
-        evidence, passages_only
-    ):
-        return None, None, "evidence_not_verified"
+    result["answer"] = normalize_null_values(answer)
+    result["evidence"] = normalize_null_values(evidence)
 
-    if not answer_is_grounded(answer, passages_only, field_name):
-        return None, None, "answer_not_grounded"
+    if result["answer"] is None:
+        result["evidence"] = None
 
-    return answer.strip(), evidence.strip(), "extracted"
+    return result
+# ---------------------------------------------------------
+# EXTRACT ONE FIELD
+# ---------------------------------------------------------
 
-
-# ============================================================
-# QUESTIONNAIRE ANSWER EXTRACTION
-# ============================================================
-
-def extract_questionnaire_answers(
-    questionnaire_text: str,
-    company_name: str,
-    product_name: str
+def extract_one_field(
+    field_name,
+    passages,
+    definition,
+    source_name="questionnaire"
 ):
     """
-    Extract company and product information using only the
-    questionnaire. Every field is extracted separately from the
-    passages that talk about it.
+    Extract one field using only the supplied passages.
 
-    Returns (OnePagerExtraction, evidence_data).
-    evidence_data: {section: {field: {"quote", "source"}}}
+    Returns:
+        answer
+        evidence
     """
 
-    if not questionnaire_text or not questionnaire_text.strip():
-        raise ValueError("Questionnaire text is empty.")
+    if not passages:
+        return None, None
 
-    windows = build_windows(questionnaire_text)
+    source_text = "\n\n".join(
+        str(passage)
+        for passage in passages
+        if passage
+    ).strip()
+
+    if not source_text:
+        return None, None
+
+    instruction = build_instruction(
+        field_name,
+        definition
+    )
+
+    user_prompt = f"""
+FIELD NAME:
+{field_name}
+
+SOURCE TYPE:
+{source_name}
+
+FIELD INSTRUCTIONS:
+{instruction}
+
+SOURCE PASSAGES:
+<source>
+{source_text}
+</source>
+
+Extract the answer using only the source passages.
+
+Return:
+- answer: concise extracted information or null
+- evidence: exact supporting text copied from the source
+
+Return only valid JSON.
+"""
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    ]
+
+    response_text = call_ollama(
+        messages=messages,
+        response_format=FIELD_ANSWER_SCHEMA
+    )
+
+    result = parse_field_response(
+        response_text
+    )
+
+    answer = result["answer"]
+    evidence = result["evidence"]
+
+    if answer is None:
+        return None, None
+
+    if not evidence:
+        print(
+            f"[WARNING] Missing evidence for {field_name}"
+        )
+        return None, None
+
+    # Verify that the evidence belongs to the supplied passages.
+    if not evidence_found(
+        evidence,
+        source_text
+    ):
+        print(
+            f"[WARNING] Evidence verification failed: {field_name}"
+        )
+        return None, None
+
+    # Verify that the answer is grounded in the source.
+    if not answer_is_grounded(
+        answer,
+        source_text,
+        field_name
+    ):
+        print(
+            f"[WARNING] Grounding verification failed: {field_name}"
+        )
+        return None, None
+
+    return answer, evidence
+# ---------------------------------------------------------
+# EXTRACT ALL QUESTIONNAIRE ANSWERS
+# ---------------------------------------------------------
+
+def extract_questionnaire_answers(
+    questionnaire_text,
+    company_name=None,
+    product_name=None
+):
+    """
+    Extract all company and product fields from the questionnaire.
+
+    The supplied company and product names are treated as
+    authoritative and are not re-generated by the LLM.
+
+    Returns:
+        extracted_data
+        evidence_data
+    """
+
+    if not questionnaire_text:
+        raise ValueError(
+            "Questionnaire text cannot be empty."
+        )
+
+    print("\nStarting questionnaire extraction...")
+
+    # Split questionnaire into manageable windows.
+    windows = build_windows(
+        questionnaire_text
+    )
+
+    if not windows:
+        raise ValueError(
+            "No usable questionnaire text was found."
+        )
+
+    print(
+        f"Created {len(windows)} questionnaire windows."
+    )
 
     definitions = get_field_definitions()
 
-    print("\n========== QUESTIONNAIRE EXTRACTION ==========")
-    print("Model:", MODEL_NAME)
-    print("Passages:", len(windows))
+    extracted_data = {
+        "company": {},
+        "product": {}
+    }
 
-    answers = {"company": {}, "product": {}}
-    evidence_data = {"company": {}, "product": {}}
+    evidence_data = {
+        "company": {},
+        "product": {}
+    }
 
-    work = [
-        (section, field_name, definition)
-        for section, fields in definitions.items()
-        for field_name, definition in fields.items()
-        if field_name not in NAME_FIELDS
-    ]
+    total_fields = sum(
+        len(section)
+        for section in definitions.values()
+    )
 
-    for number, (section, field_name, definition) in enumerate(
-        work, start=1
-    ):
+    completed_fields = 0
 
-        passages = find_field_windows(windows, field_name)
+    # -----------------------------------------------------
+    # Extract each field.
+    # -----------------------------------------------------
 
-        if not passages:
-
-            print(f"[{number}/{len(work)}] {field_name}: no matching passage")
-
-            answers[section][field_name] = None
-            evidence_data[section][field_name] = {
-                "quote": None, "source": None
-            }
-
-            continue
-
-        answer, evidence, status = extract_one_field(
-            section, field_name, definition, passages,
-            company_name, product_name
-        )
+    for section_name, section_fields in definitions.items():
 
         print(
-            f"[{number}/{len(work)}] {field_name}: {status}"
-            + (f" -> {answer[:80]}" if answer else "")
+            f"\nExtracting {section_name.upper()} information..."
         )
 
-        answers[section][field_name] = answer
-        evidence_data[section][field_name] = {
-            "quote": evidence,
-            "source": "questionnaire" if evidence else None
-        }
+        for field_name, definition in section_fields.items():
 
-    # User-provided names are authoritative.
-    answers["company"]["company_name"] = company_name
-    answers["product"]["product_name"] = product_name
+            completed_fields += 1
 
-    try:
-
-        extracted = OnePagerExtraction.model_validate(answers)
-
-    except Exception as error:
-
-        raise ValueError(
-            f"Questionnaire extraction validation failed: {error}"
-        ) from error
-
-    return extracted, evidence_data
-
-
-# ============================================================
-# EVIDENCE VERIFICATION
-# ============================================================
-def verify_questionnaire_evidence(
-    questionnaire_text: str,
-    evidence_data: dict
-):
-    """
-    Verify that every evidence quotation appears in the original
-    questionnaire. Does not modify the answers.
-    """
-
-    normalized_questionnaire = normalize_text(questionnaire_text)
-
-    verification_results = {}
-
-    for section_name, fields in evidence_data.items():
-
-        verification_results[section_name] = {}
-
-        if not isinstance(fields, dict):
-            continue
-
-        for field_name, evidence in fields.items():
-
-            quote = (
-                evidence.get("quote")
-                if isinstance(evidence, dict) else None
+            print(
+                f"[{completed_fields}/{total_fields}] "
+                f"Extracting: {field_name}"
             )
 
-            if not quote:
+            # User-provided names take priority.
+            if field_name == "company_name":
 
-                verification_results[section_name][field_name] = {
-                    "verified": False,
-                    "needs_review": True,
-                    "reason": "No supporting quotation found."
-                }
+                extracted_data[section_name][field_name] = (
+                    company_name.strip()
+                    if company_name
+                    else None
+                )
+
+                evidence_data[section_name][field_name] = None
 
                 continue
 
-            verified = normalize_text(quote) in normalized_questionnaire
+            if field_name == "product_name":
 
-            verification_results[section_name][field_name] = {
-                "verified": verified,
-                "needs_review": not verified,
-                "reason": (
-                    "Quotation found in questionnaire."
-                    if verified else
-                    "Quotation could not be matched exactly. "
-                    "Manual review may be required."
+                extracted_data[section_name][field_name] = (
+                    product_name.strip()
+                    if product_name
+                    else None
                 )
-            }
 
-    return verification_results
+                evidence_data[section_name][field_name] = None
 
+                continue
 
-# ============================================================
-# MAIN QUESTIONNAIRE EXTRACTION FUNCTION
-# ============================================================
+            # Find relevant questionnaire passages.
+            relevant_passages = find_field_windows(
+                windows,
+                field_name,
+                top_k=TOP_WINDOWS_PER_FIELD
+            )
 
-def extract_from_questionnaire(
-    questionnaire_text: str,
-    company_name: str,
-    product_name: str,
-    return_evidence=False
+            if not relevant_passages:
+
+                extracted_data[section_name][field_name] = None
+                evidence_data[section_name][field_name] = None
+
+                continue
+
+            # Extract one field.
+            try:
+
+                answer, evidence = extract_one_field(
+                    field_name=field_name,
+                    passages=relevant_passages,
+                    definition=definition,
+                    source_name="questionnaire"
+                )
+
+            except Exception as exc:
+
+                print(
+                    f"[ERROR] Could not extract "
+                    f"{field_name}: {exc}"
+                )
+
+                answer = None
+                evidence = None
+
+            extracted_data[section_name][field_name] = answer
+
+            evidence_data[section_name][field_name] = evidence
+
+            if answer is not None:
+                print(
+                    f"  Extracted: {answer}"
+                )
+            else:
+                print(
+                    "  No sufficiently supported answer found."
+                )
+
+    # -----------------------------------------------------
+    # Validate extracted structure.
+    # -----------------------------------------------------
+
+    extracted_data = normalize_null_values(
+        extracted_data
+    )
+
+    validated_data = OnePagerExtraction.model_validate(
+        extracted_data
+    )
+
+    extracted_data = validated_data.model_dump(
+        mode="json"
+    )
+
+    print("\nQuestionnaire extraction completed.")
+
+    return extracted_data, evidence_data
+
+# ---------------------------------------------------------
+# VERIFY QUESTIONNAIRE EVIDENCE
+# ---------------------------------------------------------
+
+def verify_questionnaire_evidence(
+    extracted_data,
+    evidence_data,
+    questionnaire_text
 ):
     """
-    Default:
-        Returns the validated OnePagerExtraction object.
+    Verify that every extracted questionnaire answer has
+    supporting evidence in the original questionnaire.
 
-    If return_evidence=True:
-        Returns extracted_answers, evidence_data, evidence_verification
+    Returns a verification report.
     """
 
-    extracted_answers, evidence_data = extract_questionnaire_answers(
+    verification = {
+        "verified": True,
+        "total_checked": 0,
+        "passed": 0,
+        "failed": 0,
+        "fields": {
+            "company": {},
+            "product": {}
+        }
+    }
+
+    for section_name, section_fields in extracted_data.items():
+
+        for field_name, answer in section_fields.items():
+
+            # User-provided names are authoritative.
+            if field_name in NAME_FIELDS:
+                verification["fields"][section_name][field_name] = {
+                    "status": "authoritative_input",
+                    "verified": True
+                }
+                continue
+
+            if answer is None:
+                verification["fields"][section_name][field_name] = {
+                    "status": "not_found",
+                    "verified": True
+                }
+                continue
+
+            verification["total_checked"] += 1
+
+            evidence = (
+                evidence_data
+                .get(section_name, {})
+                .get(field_name)
+            )
+
+            evidence_valid = evidence_found(
+                evidence,
+                questionnaire_text
+            )
+
+            answer_valid = answer_is_grounded(
+                answer,
+                questionnaire_text,
+                field_name
+            )
+
+            field_verified = (
+                evidence_valid and answer_valid
+            )
+
+            if field_verified:
+                verification["passed"] += 1
+
+                status = "verified"
+
+            else:
+                verification["failed"] += 1
+                verification["verified"] = False
+
+                status = "failed"
+
+                # Do not retain an answer that fails
+                # final questionnaire verification.
+                extracted_data[section_name][field_name] = None
+                evidence_data[section_name][field_name] = None
+
+            verification["fields"][section_name][field_name] = {
+                "status": status,
+                "verified": field_verified
+            }
+
+    print("\nQuestionnaire evidence verification completed.")
+
+    print(
+        f"Total checked: {verification['total_checked']}"
+    )
+
+    print(
+        f"Passed: {verification['passed']}"
+    )
+
+    print(
+        f"Failed: {verification['failed']}"
+    )
+
+    return verification
+
+
+# ---------------------------------------------------------
+# PUBLIC QUESTIONNAIRE EXTRACTION FUNCTION
+# ---------------------------------------------------------
+
+def extract_from_questionnaire(
+    questionnaire_text,
+    company_name=None,
+    product_name=None,
+    return_evidence=False,
+    return_verification=False
+):
+    """
+    Main public function for questionnaire extraction.
+
+    Parameters:
+        questionnaire_text:
+            Extracted text from the questionnaire.
+
+        company_name:
+            Company name supplied by the user.
+
+        product_name:
+            Product name supplied by the user.
+
+        return_evidence:
+            If True, also return field-level evidence.
+
+        return_verification:
+            If True, also return evidence verification report.
+
+    Returns:
+        extracted_data
+
+        If return_evidence=True:
+            extracted_data, evidence_data
+
+        If return_verification=True:
+            extracted_data, evidence_data, verification
+    """
+
+    extracted_data, evidence_data = extract_questionnaire_answers(
         questionnaire_text=questionnaire_text,
         company_name=company_name,
         product_name=product_name
     )
 
-    if not return_evidence:
-        return extracted_answers
-
-    evidence_verification = verify_questionnaire_evidence(
-        questionnaire_text=questionnaire_text,
-        evidence_data=evidence_data
+    verification = verify_questionnaire_evidence(
+        extracted_data=extracted_data,
+        evidence_data=evidence_data,
+        questionnaire_text=questionnaire_text
     )
 
-    return extracted_answers, evidence_data, evidence_verification
+    # Validate the final structure after verification.
+    validated_data = OnePagerExtraction.model_validate(
+        extracted_data
+    )
+
+    extracted_data = validated_data.model_dump(
+        mode="json"
+    )
+
+    if return_verification:
+        return (
+            extracted_data,
+            evidence_data,
+            verification
+        )
+
+    if return_evidence:
+        return (
+            extracted_data,
+            evidence_data
+        )
+
+    return extracted_data
+
