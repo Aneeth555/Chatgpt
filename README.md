@@ -1,1 +1,1 @@
- python -c "from schemas.field_definitions import *; print('Total:', len(get_all_field_names())); print('Company:', len(get_section_definitions('company'))); print('Product:', len(get_section_definitions('product')))"
+ python -c "from schemas.field_definitions import get_field_definitions; d=get_field_definitions(); print('Company fields:', list(d['company'].keys())); print('Product fields:', list(d['product'].keys()))"
