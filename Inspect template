@@ -1,18 +1,69 @@
- from pathlib import Path
-import zipfile
+ 
+from pathlib import Path
 
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.dml.color import RGBColor
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-INPUT_FILE = (
-    BASE_DIR
-    / "templates"
-    / "company_one_pager_template.pptx"
-)
-def inspect_picture_placeholders(presentation):
+ORIGINAL_FILE = BASE_DIR / "templates" / "original_one_pager.pptx"
+CLEAN_FILE = BASE_DIR / "templates" / "company_one_pager_template.pptx"
+
+
+def get_color(font):
+
+    try:
+        if font.color.type is None:
+            return None
+
+        if font.color.rgb:
+            return str(font.color.rgb)
+
+        return f"Theme color: {font.color.theme_color}"
+
+    except (AttributeError, TypeError, ValueError):
+        return "Inherited / Theme"
+
+
+def inspect_font(run):
+
+    font = run.font
+
+    print("      Run text:", repr(run.text))
+    print("      Font name:", font.name)
+    print("      Font size:", font.size.pt if font.size else None)
+    print("      Bold:", font.bold)
+    print("      Italic:", font.italic)
+    print("      Underline:", font.underline)
+    print("      Font color:", get_color(font))
+
+
+def inspect_text_frame(shape):
+
+    if not shape.has_text_frame:
+        return
+
+    print("  TEXT:", repr(shape.text))
+
+    for p_index, paragraph in enumerate(shape.text_frame.paragraphs):
+
+        print(f"  Paragraph {p_index}:")
+        print("      Alignment:", paragraph.alignment)
+        print("      Level:", paragraph.level)
+        print("      Space before:", paragraph.space_before)
+        print("      Space after:", paragraph.space_after)
+
+        for run in paragraph.runs:
+            inspect_font(run)
+
+
+def inspect_shapes(presentation, template_name):
+
+    print("\n" + "=" * 75)
+    print(f"INSPECTING: {template_name}")
+    print("=" * 75)
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
@@ -20,232 +71,126 @@ def inspect_picture_placeholders(presentation):
 
         print(f"\n========== SLIDE {slide_number} ==========")
 
-        for shape in slide.shapes:
+        for index, shape in enumerate(slide.shapes):
 
-            if not shape.is_placeholder:
-                continue
+            print("\n" + "-" * 60)
+            print(f"Shape position in collection: {index}")
+            print("Shape ID:", shape.shape_id)
+            print("Shape name:", shape.name)
+            print("Shape type:", shape.shape_type)
 
-            if (
-                shape.placeholder_format.type
-                != PP_PLACEHOLDER.PICTURE
-            ):
-                continue
+            print("Left:", shape.left)
+            print("Top:", shape.top)
+            print("Width:", shape.width)
+            print("Height:", shape.height)
 
-            print("\nPICTURE PLACEHOLDER:", shape.name)
+            if shape.is_placeholder:
 
-            slide_index = shape.placeholder_format.idx
-            slide_blips = shape._element.xpath(".//a:blip")
-
-            print(
-                "Slide placeholder type:",
-                shape.placeholder_format.type
-            )
-            print("Slide placeholder index:", slide_index)
-            print("Slide shape type:", shape.shape_type)
-            print("Slide image references:", len(slide_blips))
-
-            matching_layout = None
-
-            for layout_shape in slide.slide_layout.shapes:
-
-                if not layout_shape.is_placeholder:
-                    continue
+                print("Is placeholder: YES")
+                print(
+                    "Placeholder type:",
+                    shape.placeholder_format.type
+                )
+                print(
+                    "Placeholder index:",
+                    shape.placeholder_format.idx
+                )
 
                 if (
-                    layout_shape.placeholder_format.type
-                    != PP_PLACEHOLDER.PICTURE
+                    shape.placeholder_format.type
+                    == PP_PLACEHOLDER.PICTURE
                 ):
-                    continue
+                    print("FIELD CATEGORY: PICTURE PLACEHOLDER")
 
-                if (
-                    layout_shape.placeholder_format.idx
-                    == slide_index
-                ):
-                    matching_layout = layout_shape
-                    break
+                else:
+                    print("FIELD CATEGORY: TEXT / OTHER PLACEHOLDER")
 
-            if matching_layout is None:
-                print("Matching layout placeholder: NOT FOUND")
-                continue
+            else:
+                print("Is placeholder: NO")
 
-            layout_blips = (
-                matching_layout._element.xpath(".//a:blip")
-            )
+            if shape.has_text_frame:
+                inspect_text_frame(shape)
 
-            print(
-                "Matching layout placeholder:",
-                matching_layout.name
-            )
-            print(
-                "Layout placeholder type:",
-                matching_layout.placeholder_format.type
-            )
-            print(
-                "Layout placeholder index:",
-                matching_layout.placeholder_format.idx
-            )
-            print(
-                "Layout shape type:",
-                matching_layout.shape_type
-            )
-            print(
-                "Layout image references:",
-                len(layout_blips)
-            )
-def inspect_text_placeholders(presentation):
+            if shape.shape_type == 13:
+                print("FIELD CATEGORY: PICTURE")
+                print("Image dimensions:", shape.width, shape.height)
 
-    print("\n========== TEXT PLACEHOLDERS ==========")
+
+def inspect_layouts(presentation, template_name):
+
+    print("\n" + "=" * 75)
+    print(f"LAYOUT INSPECTION: {template_name}")
+    print("=" * 75)
 
     for slide_number, slide in enumerate(
         presentation.slides, start=1
     ):
 
-        print(f"\nSLIDE {slide_number}")
+        print(f"\nSLIDE {slide_number} LAYOUT")
 
-        for shape in slide.shapes:
+        layout = slide.slide_layout
 
-            if not shape.is_placeholder:
-                continue
-
-            if not shape.has_text_frame:
-                continue
-
-            if (
-                shape.placeholder_format.type
-                == PP_PLACEHOLDER.PICTURE
-            ):
-                continue
-
-            print("\nShape:", shape.name)
-            print("Text:", repr(shape.text))
-            print(
-                "Placeholder type:",
-                shape.placeholder_format.type
-def inspect_placeholder_fill(presentation):
-
-    print("\n========== PLACEHOLDER FILL INSPECTION ==========")
-
-    for slide in presentation.slides:
-
-        for shape in slide.shapes:
+        for shape in layout.shapes:
 
             if not shape.is_placeholder:
                 continue
 
-            if (
-                shape.placeholder_format.type
-                != PP_PLACEHOLDER.PICTURE
-            ):
-                continue
+            print("\nLayout placeholder:", shape.name)
+            print("Shape ID:", shape.shape_id)
+            print("Placeholder type:", shape.placeholder_format.type)
+            print("Placeholder index:", shape.placeholder_format.idx)
+            print("Left:", shape.left)
+            print("Top:", shape.top)
+            print("Width:", shape.width)
+            print("Height:", shape.height)
 
-            print("\nPlaceholder:", shape.name)
+            if shape.has_text_frame:
+                print("Layout text:", repr(shape.text))
 
-            element = shape._element
+                for paragraph in shape.text_frame.paragraphs:
 
-            print(
-                "Slide has blipFill:",
-                len(element.xpath(".//a:blipFill"))
-            )
+                    for run in paragraph.runs:
+                        inspect_font(run)
 
-            print(
-                "Slide has solidFill:",
-                len(element.xpath(".//a:solidFill"))
-            )
 
-            print(
-                "Slide has noFill:",
-                len(element.xpath(".//a:noFill"))
-            )
+def inspect_presentation(file_path, template_name):
 
-            layout_shape = None
-
-            for candidate in shape.part.slide_layout.shapes:
-
-                if not candidate.is_placeholder:
-                    continue
-
-                if (
-                    candidate.placeholder_format.type
-                    != PP_PLACEHOLDER.PICTURE
-                ):
-                    continue
-
-                if (
-                    candidate.placeholder_format.idx
-                    == shape.placeholder_format.idx
-                ):
-                    layout_shape = candidate
-                    break
-
-            if layout_shape is not None:
-
-                layout_element = layout_shape._element
-
-                print(
-                    "Layout has blipFill:",
-                    len(layout_element.xpath(".//a:blipFill"))
-                )
-
-                print(
-                    "Layout has solidFill:",
-                    len(layout_element.xpath(".//a:solidFill"))
-                )
-
-                print(
-                    "Layout has noFill:",
-                    len(layout_element.xpath(".//a:noFill"))
-                )
-def inspect_embedded_images():
-
-    print("\n========== EMBEDDED IMAGE FILES ==========")
-
-    with zipfile.ZipFile(INPUT_FILE, "r") as pptx_file:
-
-        image_files = [
-            name
-            for name in pptx_file.namelist()
-            if name.startswith("ppt/media/")
-        ]
-
-        if not image_files:
-            print("No embedded image files found.")
-
-        else:
-            for image_file in image_files:
-                print(image_file)
-
-        print(
-            "\nTotal embedded image files:",
-            len(image_files)
-        )
-def main():
-
-    if not INPUT_FILE.exists():
-
-        print("ERROR: Clean template not found.")
-        print(INPUT_FILE)
+    if not file_path.exists():
+        print(f"\nERROR: File not found: {file_path}")
         return
 
-    presentation = Presentation(str(INPUT_FILE))
+    presentation = Presentation(str(file_path))
 
-    print("CLEAN TEMPLATE INSPECTION")
-    print("File:", INPUT_FILE)
+    print("\n\n")
+    print("#" * 80)
+    print("TEMPLATE:", template_name)
+    print("FILE:", file_path)
+    print("SLIDE WIDTH:", presentation.slide_width)
+    print("SLIDE HEIGHT:", presentation.slide_height)
+    print("#" * 80)
 
-    # 1. Picture placeholder inspection
-    inspect_picture_placeholders(presentation)
+    inspect_shapes(presentation, template_name)
+    inspect_layouts(presentation, template_name)
 
-    # 2. Text placeholder inspection
-    inspect_text_placeholders(presentation)
 
-    # 3. Picture fill inspection
-    inspect_placeholder_fill(presentation)
+def main():
 
-    # 4. Embedded image inspection
-    inspect_embedded_images()
+    print("\nCOMPLETE ONE-PAGER TEMPLATE INSPECTION")
 
-    print("\n========== INSPECTION COMPLETED ==========")
+    # Original: inspect original text and formatting
+    inspect_presentation(
+        ORIGINAL_FILE,
+        "ORIGINAL TEMPLATE"
+    )
+
+    # Clean: inspect reusable placeholders and positions
+    inspect_presentation(
+        CLEAN_FILE,
+        "CLEAN TEMPLATE"
+    )
+
+    print("\n\n========== INSPECTION COMPLETED ==========")
 
 
 if __name__ == "__main__":
     main()
-
