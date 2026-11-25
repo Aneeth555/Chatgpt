@@ -1,433 +1,1826 @@
-"""
-Logo resolution for partners / customers / competitors / the company itself.
+ # ============================================================
+# FILE: pptx_generation/logo_extractor.py
+# PURPOSE:
+#   Extract company, GTM partner, customer and competitor logos.
+#   Save logos into category-specific folders.
+#   Generate a separate JSON containing logo paths.
+#
+# The original final one-pager JSON is never modified.
+# ============================================================
 
-Order tried for every entry {name, website?, logo_path?, logo_url?}:
-  1. logo_path        local file (relative paths resolve against the schema file)
-  2. logo_url         direct image URL
-  3. website          scrape the homepage: JSON-LD logo -> <img> with "logo" in src/alt/class
-                      -> apple-touch-icon -> <link rel=icon> -> og:image -> /favicon.ico
-  4. Google favicon service (low-res, last resort)
-  5. None             -> the filler writes the company *name* in the slot instead
-
-Every logo is normalised to a trimmed RGBA PNG and cached, so the slot always receives the same format.
-"""
 from __future__ import annotations
 
-import difflib
+import argparse
 import hashlib
-import io
 import json
-import os
 import re
 import shutil
-import sys
+import os
+
+from io import BytesIO
 from pathlib import Path
-from typing import Callable, Optional
-from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
+
+import requests
+
+from bs4 import BeautifulSoup
 
 from PIL import Image, ImageChops
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover
-    BeautifulSoup = None
 
-UA = {"User-Agent": "Mozilla/5.0 (compatible; OnePagerBot/1.0)"}
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0 Safari/537.36"
+)
+
 MAX_BYTES = 6_000_000
+
 MIN_SIDE = 24
+
+REQUEST_TIMEOUT = 15
+
+
+# ============================================================
+# LOGO FOLDER STRUCTURE
+# ============================================================
+
+LOGO_SUBFOLDERS = {
+    "company_logo": "company",
+    "gtm_partners": "gtm_partners",
+    "key_customers": "customers",
+    "competitors": "competitors",
+}
+
+
+# ============================================================
+# JSON FIELD MAPPING
+# ============================================================
+
+ROWS = {
+    "gtm_partners": [
+        "gtm_partners",
+        "gtm_partner",
+        "partners",
+    ],
+
+    "key_customers": [
+        "key_customers",
+        "customers",
+    ],
+
+    "competitors": [
+        "competitors",
+        "main_competitors",
+    ],
+}
+
+
+ROW_LABELS = {
+    "gtm_partners": "GTM Partners",
+    "key_customers": "Key Customers",
+    "competitors": "Main Competitors",
+}
+
+
+NAME_KEYS = [
+    "company_name",
+    "name",
+]
+
+
+WEBSITE_KEYS = [
+    "website",
+    "company_website",
+    "official_website",
+    "website_url",
+    "url",
+]
+
+
+NOT_A_NAME = {
+    "",
+    "none",
+    "n/a",
+    "na",
+    "null",
+    "unknown",
+    "not available",
+    "not specified",
+    "etc",
+    "others",
+}
+
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
+
+def log(message: str) -> None:
+    """Print a progress message."""
+
+    print(message)
 
 
 def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "logo"
+    """Convert a name into a safe filename."""
+
+    text = str(text or "").strip().lower()
+
+    text = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        text
+    )
+
+    text = text.strip("_")
+
+    return text or "unknown_logo"
+
+
+def normalise_name(text: str) -> str:
+    """Normalise a name for comparison."""
+
+    text = str(text or "").lower()
+
+    text = re.sub(
+        r"[^a-z0-9]",
+        "",
+        text
+    )
+
+    return text
+
+
+def clean_name(value) -> str | None:
+    """Remove empty or invalid organisation names."""
+
+    if value is None:
+        return None
+
+    name = str(value).strip()
+
+    if name.lower() in NOT_A_NAME:
+        return None
+
+    return name
 
 
 def domain_of(url: str) -> str:
+    """Extract the domain from a website URL."""
+
     if not url:
         return ""
-    if "//" not in url:
+
+    if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    return urlparse(url).netloc.removeprefix("www.")
+
+    return (
+        urlparse(url)
+        .netloc
+        .lower()
+        .replace("www.", "")
+    )
 
 
-# ------------------------------------------------------------------ fetching
-def http_get(url: str, timeout: int = 10) -> bytes:
-    if requests is None:
-        raise RuntimeError("pip install requests")
-    r = requests.get(url, headers=UA, timeout=timeout, stream=True)
-    r.raise_for_status()
-    data = r.raw.read(MAX_BYTES + 1, decode_content=True)
-    if len(data) > MAX_BYTES:
-        raise ValueError("image too large")
-    return data
+def normalise_url(url: str | None) -> str | None:
+    """Ensure that a URL has a valid scheme."""
+
+    if not url:
+        return None
+
+    url = str(url).strip()
+
+    if not url:
+        return None
+
+    if url.startswith("//"):
+        url = "https:" + url
+
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    return url.rstrip("/")
 
 
-# Replaceable in tests / behind a corporate proxy
-Fetcher = Callable[[str], bytes]
+def file_hash(value: str) -> str:
+    """Generate a SHA-256 hash for cache filenames."""
 
+    return hashlib.sha256(
+        value.encode("utf-8")
+    ).hexdigest()
 
-# ------------------------------------------------------------------ image normalising
-def _svg_to_png(raw: bytes) -> bytes:
+# ============================================================
+# HTTP REQUEST
+# ============================================================
+
+def http_get(
+    url: str,
+    timeout: int = REQUEST_TIMEOUT
+) -> bytes | None:
+    """
+    Download content from a URL.
+
+    Maximum download size is limited to MAX_BYTES.
+    """
+
     try:
-        import cairosvg  # optional
-    except ImportError as e:
-        raise RuntimeError("SVG logo found; pip install cairosvg to convert it") from e
-    return cairosvg.svg2png(bytestring=raw, output_width=600)
+        response = requests.get(
+            url,
+            headers={
+                "User-Agent": USER_AGENT
+            },
+            timeout=timeout,
+            stream=True,
+            allow_redirects=True,
+        )
+
+        response.raise_for_status()
+
+        content = bytearray()
+
+        for chunk in response.iter_content(
+            chunk_size=8192
+        ):
+            if not chunk:
+                continue
+
+            content.extend(chunk)
+
+            if len(content) > MAX_BYTES:
+                log(f"Skipped oversized file: {url}")
+                return None
+
+        return bytes(content)
+
+    except Exception as exc:
+        log(f"Request failed: {url} ({exc})")
+        return None
 
 
-def _trim(im: Image.Image) -> Image.Image:
-    """Remove transparent or uniform-colour margins."""
-    im = im.convert("RGBA")
-    alpha = im.split()[3]
-    if alpha.getextrema()[0] < 250:  # real transparency -> trim by alpha
-        bbox = alpha.getbbox()
-    else:  # opaque -> trim only a white-ish margin; never strip a brand-colour background
-        corner = im.getpixel((0, 0))
-        if min(corner[:3]) < 235:
-            return im
-        bg = Image.new("RGBA", im.size, corner)
-        diff = ImageChops.difference(im, bg).convert("L").point(lambda p: 255 if p > 12 else 0)
-        bbox = diff.getbbox()
-    return im.crop(bbox) if bbox else im
+# ============================================================
+# SVG CONVERSION
+# ============================================================
 
+def svg_to_png(data: bytes) -> bytes | None:
+    """
+    Convert SVG image data into PNG format.
 
-def normalise(raw: bytes, max_px: int = 600) -> Image.Image:
-    head = raw[:300].lstrip().lower()
-    if head.startswith(b"<?xml") or head.startswith(b"<svg") or b"<svg" in head:
-        raw = _svg_to_png(raw)
-    im = Image.open(io.BytesIO(raw))
-    if getattr(im, "n_frames", 1) > 1:  # animated gif / multi-size ico: take the largest frame
-        im.seek(0)
-    im = _trim(im)
-    if min(im.size) < MIN_SIDE:
-        raise ValueError(f"logo too small {im.size}")
-    im.thumbnail((max_px, max_px))
-    return im
+    Requires CairoSVG.
+    """
 
-
-# ------------------------------------------------------------------ page scraping
-def candidate_urls(website: str, fetch: Fetcher = http_get) -> list[str]:
-    base = website if "//" in website else "https://" + website
     try:
-        html = fetch(base).decode("utf-8", "ignore")
-    except Exception:
-        html = ""
-    cands: list[tuple[int, str]] = []
-    if html and BeautifulSoup:
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup.find_all("script", type="application/ld+json"):
-            try:
-                blob = json.loads(tag.string or "")
-            except Exception:
-                continue
-            for node in blob if isinstance(blob, list) else [blob]:
-                logo = node.get("logo") if isinstance(node, dict) else None
-                logo = logo.get("url") if isinstance(logo, dict) else logo
-                if isinstance(logo, str):
-                    cands.append((0, urljoin(base, logo)))
-        for img in soup.find_all("img"):
-            blob = " ".join([img.get("src", ""), img.get("alt", ""), " ".join(img.get("class", []))]).lower()
-            if "logo" in blob and img.get("src") and not img["src"].startswith("data:"):
-                in_header = bool(img.find_parent(["header", "nav"]))
-                cands.append((1 if in_header else 2, urljoin(base, img["src"])))
-        for link in soup.find_all("link", rel=True):
-            rel = " ".join(link["rel"]).lower()
-            href = link.get("href")
-            if not href:
-                continue
-            if "apple-touch-icon" in rel:
-                cands.append((3, urljoin(base, href)))
-            elif "icon" in rel:
-                cands.append((4 if href.lower().endswith(".svg") else 5, urljoin(base, href)))
-        og = soup.find("meta", property="og:image")
-        if og and og.get("content"):
-            cands.append((6, urljoin(base, og["content"])))
-    cands.append((7, urljoin(base, "/favicon.ico")))
-    cands.append((8, f"https://www.google.com/s2/favicons?domain={domain_of(base)}&sz=128"))
-    seen, ordered = set(), []
-    for _, u in sorted(cands, key=lambda c: c[0]):
-        if u not in seen:
-            seen.add(u)
-            ordered.append(u)
-    return ordered
+        import cairosvg
+
+        return cairosvg.svg2png(
+            bytestring=data
+        )
+
+    except ImportError:
+        log(
+            "CairoSVG is not installed. "
+            "SVG logos will be skipped."
+        )
+
+        return None
+
+    except Exception as exc:
+        log(f"SVG conversion failed: {exc}")
+        return None
 
 
-# ------------------------------------------------------------------ public API
-def get_logo(
-    entry: dict | str,
-    cache_dir: str | Path = ".logo_cache",
-    base_dir: str | Path = ".",
-    fetch: Fetcher = http_get,
-    log: Callable[[str], None] = lambda m: None,
-) -> Optional[Path]:
-    """Return the path of a normalised PNG, or None when nothing usable was found."""
-    if isinstance(entry, str):
-        entry = {"name": entry}
-    name = entry.get("name", "")
-    cache = Path(cache_dir)
-    cache.mkdir(parents=True, exist_ok=True)
-    key = domain_of(entry.get("website", "")) or slug(name)
-    out = cache / f"{slug(key)}-{hashlib.md5(json.dumps([entry.get('logo_path'), entry.get('logo_url'), key]).encode()).hexdigest()[:6]}.png"
-    if out.exists():
-        return out
+# ============================================================
+# IMAGE PROCESSING
+# ============================================================
 
-    def save(raw: bytes, source: str) -> Optional[Path]:
-        try:
-            normalise(raw).save(out)
-            log(f"logo for {name or key!r} from {source}")
-            return out
-        except Exception as e:
-            log(f"  skip {source}: {e}")
+def trim_image(image: Image.Image) -> Image.Image:
+    """
+    Remove unnecessary margins around a logo.
+
+    Transparent margins are removed first.
+    Uniform background margins are then trimmed.
+    """
+
+    image = image.convert("RGBA")
+
+    # Remove transparent margins.
+    alpha = image.getchannel("A")
+
+    alpha_bbox = alpha.getbbox()
+
+    if alpha_bbox:
+        image = image.crop(alpha_bbox)
+
+    # Attempt to remove uniform border margins.
+    background = Image.new(
+        "RGBA",
+        image.size,
+        image.getpixel((0, 0))
+    )
+
+    difference = ImageChops.difference(
+        image,
+        background
+    )
+
+    bbox = difference.getbbox()
+
+    if bbox:
+        image = image.crop(bbox)
+
+    return image
+
+
+def normalise_image(
+    data: bytes
+) -> Image.Image | None:
+    """
+    Convert an image into a clean RGBA image.
+
+    Supports common raster formats and SVG.
+    """
+
+    if not data:
+        return None
+
+    try:
+
+        # Detect SVG content.
+        if b"<svg" in data[:1000].lower():
+
+            converted = svg_to_png(data)
+
+            if converted is None:
+                return None
+
+            data = converted
+
+        image = Image.open(
+            BytesIO(data)
+        )
+
+        image.load()
+
+        image = image.convert("RGBA")
+
+        width, height = image.size
+
+        # Reject extremely small images.
+        if width < MIN_SIDE or height < MIN_SIDE:
             return None
 
-    if entry.get("logo_path"):
-        p = Path(entry["logo_path"])
-        p = p if p.is_absolute() else Path(base_dir) / p
-        if p.exists() and (r := save(p.read_bytes(), str(p))):
-            return r
-        log(f"  logo_path not usable: {p}")
-    if entry.get("logo_url"):
+        image = trim_image(image)
+
+        if (
+            image.width < MIN_SIDE
+            or image.height < MIN_SIDE
+        ):
+            return None
+
+        return image
+
+    except Exception as exc:
+        log(f"Image processing failed: {exc}")
+        return None
+
+
+def save_normalised_image(
+    image: Image.Image,
+    destination: Path
+) -> Path:
+    """Save a normalised image as PNG."""
+
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    image.save(
+        destination,
+        format="PNG",
+        optimize=True
+    )
+
+    return destination
+
+# ============================================================
+# JSON-LD LOGO EXTRACTION
+# ============================================================
+
+def extract_jsonld_logos(soup) -> list[str]:
+    """
+    Extract logo URLs from JSON-LD structured data.
+
+    Many company websites provide their official logo
+    through structured data.
+    """
+
+    results = []
+
+    scripts = soup.find_all(
+        "script",
+        type="application/ld+json"
+    )
+
+    for script in scripts:
+
         try:
-            if r := save(fetch(entry["logo_url"]), entry["logo_url"]):
-                return r
-        except Exception as e:
-            log(f"  logo_url failed: {e}")
-    if entry.get("website"):
-        for url in candidate_urls(entry["website"], fetch)[:8]:
+            data = json.loads(
+                script.string or script.get_text()
+            )
+
+        except Exception:
+            continue
+
+        def inspect(item):
+
+            if isinstance(item, dict):
+
+                logo = item.get("logo")
+
+                if isinstance(logo, str):
+                    results.append(logo)
+
+                elif isinstance(logo, dict):
+
+                    if logo.get("url"):
+                        results.append(
+                            logo["url"]
+                        )
+
+                    if logo.get("contentUrl"):
+                        results.append(
+                            logo["contentUrl"]
+                        )
+
+                for value in item.values():
+                    inspect(value)
+
+            elif isinstance(item, list):
+
+                for value in item:
+                    inspect(value)
+
+        inspect(data)
+
+    return results
+
+
+# ============================================================
+# LOGO CANDIDATE DISCOVERY
+# ============================================================
+
+def candidate_urls(
+    website: str,
+    fetch=http_get
+) -> list[str]:
+    """
+    Find possible logo image URLs from a company homepage.
+
+    Priority:
+
+    1. JSON-LD logo
+    2. Header/navigation logo images
+    3. Other images identified as logos
+    4. Apple touch icon
+    5. Favicon
+    """
+
+    website = normalise_url(website)
+
+    if not website:
+        return []
+
+    html = fetch(website)
+
+    if not html:
+        return []
+
+    try:
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+    except Exception:
+        return []
+
+    candidates = []
+
+    def add_candidate(value):
+
+        if not value:
+            return
+
+        value = str(value).strip()
+
+        if not value:
+            return
+
+        full_url = urljoin(
+            website + "/",
+            value
+        )
+
+        if full_url not in candidates:
+            candidates.append(full_url)
+
+    # --------------------------------------------------------
+    # 1. JSON-LD logos
+    # --------------------------------------------------------
+
+    for logo in extract_jsonld_logos(soup):
+        add_candidate(logo)
+
+    # --------------------------------------------------------
+    # 2. Identify logo images
+    # --------------------------------------------------------
+
+    header_images = []
+
+    other_logo_images = []
+
+    for img in soup.find_all("img"):
+
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-lazy-src")
+        )
+
+        if not src:
+            continue
+
+        description = " ".join(
+            [
+                str(img.get("alt", "")),
+                str(img.get("class", "")),
+                str(img.get("id", "")),
+                str(img.get("title", "")),
+                str(src),
+            ]
+        ).lower()
+
+        if "logo" not in description:
+            continue
+
+        # Check whether the image belongs to a header/nav.
+        parent = img
+
+        in_header = False
+
+        for _ in range(5):
+
+            if parent is None:
+                break
+
+            if getattr(parent, "name", None) in [
+                "header",
+                "nav",
+            ]:
+                in_header = True
+                break
+
+            parent = getattr(
+                parent,
+                "parent",
+                None
+            )
+
+        if in_header:
+            header_images.append(src)
+
+        else:
+            other_logo_images.append(src)
+
+    # Header logos receive priority.
+    for item in header_images:
+        add_candidate(item)
+
+    for item in other_logo_images:
+        add_candidate(item)
+
+    # --------------------------------------------------------
+    # 3. Apple touch icons
+    # --------------------------------------------------------
+
+    for link in soup.find_all("link"):
+
+        rel = link.get("rel", [])
+
+        if isinstance(rel, str):
+            rel = [rel]
+
+        rel_text = " ".join(rel).lower()
+
+        if "apple-touch-icon" in rel_text:
+            add_candidate(
+                link.get("href")
+            )
+
+    # --------------------------------------------------------
+    # 4. Favicon
+    # --------------------------------------------------------
+
+    for link in soup.find_all("link"):
+
+        rel = link.get("rel", [])
+
+        if isinstance(rel, str):
+            rel = [rel]
+
+        rel_text = " ".join(rel).lower()
+
+        if "icon" in rel_text:
+            add_candidate(
+                link.get("href")
+            )
+
+    # Standard favicon fallback.
+    add_candidate("/favicon.ico")
+
+    return candidates
+# ============================================================
+# LOGO DOWNLOAD AND CACHE
+# ============================================================
+
+def get_logo(
+    entry,
+    cache_dir: Path,
+    base_dir: Path,
+    fetch=http_get,
+    refresh: bool = False
+) -> Path | None:
+    """
+    Get a logo for one company or organisation.
+
+    Supported entry formats:
+
+    1. String:
+       "Company Name"
+
+    2. Dictionary:
+       {
+           "name": "Company Name",
+           "website": "https://example.com"
+       }
+
+    3. Dictionary with direct logo URL:
+       {
+           "name": "Company Name",
+           "logo_url": "https://example.com/logo.png"
+       }
+
+    4. Dictionary with local logo:
+       {
+           "name": "Company Name",
+           "logo_path": "logos/company.png"
+       }
+
+    Returns:
+        Path to cached PNG logo, or None.
+    """
+
+    # --------------------------------------------------------
+    # Prepare entry
+    # --------------------------------------------------------
+
+    if isinstance(entry, str):
+        entry = {"name": entry}
+
+    if not isinstance(entry, dict):
+        return None
+
+    name = clean_name(
+        entry.get("name")
+        or entry.get("company_name")
+    )
+
+    if not name:
+        return None
+
+    cache_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # --------------------------------------------------------
+    # 1. Check local logo path
+    # --------------------------------------------------------
+
+    local_logo = entry.get("logo_path")
+
+    if local_logo:
+
+        local_path = Path(local_logo)
+
+        if not local_path.is_absolute():
+            local_path = base_dir / local_path
+
+        if local_path.exists():
+
             try:
-                if r := save(fetch(url), url):
-                    return r
-            except Exception as e:
-                log(f"  {url}: {e}")
-    log(f"no logo found for {name or key!r}; the name will be written instead")
+
+                image = Image.open(local_path)
+
+                image.load()
+
+                image = trim_image(image)
+
+                destination = (
+                    cache_dir
+                    / f"{slug(name)}_local.png"
+                )
+
+                return save_normalised_image(
+                    image,
+                    destination
+                )
+
+            except Exception as exc:
+
+                log(
+                    f"Local logo could not be read: "
+                    f"{local_path} ({exc})"
+                )
+
+    # --------------------------------------------------------
+    # 2. Read website and direct logo URL
+    # --------------------------------------------------------
+
+    website = normalise_url(
+        entry.get("website")
+        or entry.get("company_website")
+        or entry.get("official_website")
+        or entry.get("website_url")
+    )
+
+    logo_url = entry.get("logo_url")
+
+    cache_key = file_hash(
+        str(logo_url or website or name)
+    )
+
+    cached_file = (
+        cache_dir
+        / f"{cache_key}.png"
+    )
+
+    # --------------------------------------------------------
+    # 3. Use cached logo if available
+    # --------------------------------------------------------
+
+    if cached_file.exists() and not refresh:
+        return cached_file
+
+    # --------------------------------------------------------
+    # 4. Try direct logo URL
+    # --------------------------------------------------------
+
+    if logo_url:
+
+        data = fetch(logo_url)
+
+        if data:
+
+            image = normalise_image(data)
+
+            if image:
+
+                return save_normalised_image(
+                    image,
+                    cached_file
+                )
+
+    # --------------------------------------------------------
+    # 5. Discover logo from company website
+    # --------------------------------------------------------
+
+    if not website:
+
+        log(
+            f"No verified website available for {name}"
+        )
+
+        return None
+
+    urls = candidate_urls(
+        website,
+        fetch=fetch
+    )
+
+    # --------------------------------------------------------
+    # 6. Try discovered logo candidates
+    # --------------------------------------------------------
+
+    for candidate in urls:
+
+        data = fetch(candidate)
+
+        if not data:
+            continue
+
+        image = normalise_image(data)
+
+        if image:
+
+            log(
+                f"Logo found for {name}: {candidate}"
+            )
+
+            return save_normalised_image(
+                image,
+                cached_file
+            )
+
+    log(
+        f"No usable logo found for {name}"
+    )
+
     return None
 
 
+# ============================================================
+# JSON FIELD HELPERS
+# ============================================================
+
+def find_field(data: dict, keys: list[str]):
+    """
+    Find a field at the top level or one level inside
+    a nested dictionary.
+    """
+
+    if not isinstance(data, dict):
+        return None
+
+    # Check top-level fields.
+    for key in keys:
+
+        if key in data and data[key] is not None:
+            return data[key]
+
+    # Check nested dictionaries.
+    for value in data.values():
+
+        if isinstance(value, dict):
+
+            for key in keys:
+
+                if key in value and value[key] is not None:
+                    return value[key]
+
+    return None
 
 
-# =====================================================================
-# BATCH MODE: read the final schema, find the official website of every company that needs a logo,
-# fetch the logos, and write a copy of the schema that fill_template.py can use.
-#
-# The 13 logo places of the one-pager:
-#   1 company logo (top-left)            from the company's own website
-#   4 GTM Partners                       each partner's official website
-#   4 Key Customers                      each customer's official website
-#   4 Main Competitors                   each competitor's official website
-# =====================================================================
-ROWS = {  # row -> keys it may have in the schema (first one found is used)
-    "gtm_partners": ["gtm_partners", "gtm_partner", "partners"],
-    "key_customers": ["key_customers", "customers"],
-    "competitors": ["main_competitors", "competitors"],
-}
-ROW_LABEL = {"gtm_partners": "GTM Partners", "key_customers": "Key Customers", "competitors": "Main Competitors"}
-NAME_KEYS = ["company_name", "name"]
-SITE_KEYS = ["website", "company_website", "official_website", "website_url", "url"]
-NOT_A_NAME = {"", "none", "n/a", "na", "null", "unknown", "not available", "not specified", "etc", "others"}
-GUESS_TLDS = ["com", "ai", "io", "co", "in", "net", "org", "app"]
+def split_entries(value) -> list:
+    """
+    Convert JSON values into a list of organisation entries.
 
+    Supported:
+      - None
+      - String
+      - List of strings
+      - List of dictionaries
+      - Single dictionary
 
-def norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+    Duplicate names are removed while preserving order.
+    """
 
-
-def clean_name(raw: str) -> str:
-    s = re.sub(r"\([^)]*\)|\[[^\]]*\]", "", str(raw))              # '(reseller)'
-    s = re.split(r"\s+[-–—|]\s+|:\s+", s)[0]                         # 'Microsoft - cloud partner'
-    return s.strip(" .,;\"'")
-
-
-def split_entries(value) -> list[dict]:
-    """None | 'A, B; C' | ['A', 'B'] | [{'name': 'A', 'website': ...}]  ->  [{'name': ...}, ...] (deduplicated)"""
     if value is None:
         return []
-    items = value if isinstance(value, list) else [value]
-    entries: list[dict] = []
-    for it in items:
-        if isinstance(it, dict):
-            if clean_name(it.get("name", "")):
-                entries.append({**it, "name": clean_name(it["name"])})
-            continue
-        text = re.sub(r"\([^)]*\)|\[[^\]]*\]", "", str(it))
-        for part in re.split(r"[,;\n|•]", text):
-            n = clean_name(part)
-            if n.lower() not in NOT_A_NAME:
-                entries.append({"name": n})
-    seen, out = set(), []
-    for e in entries:
-        if norm(e["name"]) not in seen:
-            seen.add(norm(e["name"]))
-            out.append(e)
-    return out
+
+    if isinstance(value, list):
+        entries = value
+
+    elif isinstance(value, dict):
+        entries = [value]
+
+    elif isinstance(value, str):
+
+        value = value.strip()
+
+        if not value or value.lower() in NOT_A_NAME:
+            return []
+
+        entries = re.split(
+            r"[,;\n]+",
+            value
+        )
+
+    else:
+        return []
+
+    results = []
+
+    seen = set()
+
+    for item in entries:
+
+        if isinstance(item, dict):
+
+            name = clean_name(
+                item.get("name")
+                or item.get("company_name")
+            )
+
+            if not name:
+                continue
+
+            key = normalise_name(name)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            cleaned = dict(item)
+
+            cleaned["name"] = name
+
+            results.append(cleaned)
+
+        else:
+
+            name = clean_name(item)
+
+            if not name:
+                continue
+
+            key = normalise_name(name)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            results.append({
+                "name": name
+            })
+
+    return results
 
 
-def _find(schema: dict, keys: list[str]):
-    """(container dict, key) for the first key found at the top level or inside a section such as 'company'."""
-    for container in [schema] + [v for v in schema.values() if isinstance(v, dict)]:
-        for k in keys:
-            if k in container:
-                return container, k
-    return None, None
+# ============================================================
+# WEBSITE OVERRIDES
+# ============================================================
 
+def load_domain_overrides(
+    path: Path | None
+) -> dict:
+    """
+    Read manually verified official website mappings.
 
-# ------------------------------------------------------------------ official website of a company name
-def _title_text(html: str) -> str:
-    bits = re.findall(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
-    bits += re.findall(r'property=["\']og:(?:site_name|title)["\'][^>]*content=["\']([^"\']+)', html, re.I)
-    return " ".join(bits)
+    Example company_domains.json:
 
+    {
+        "Company A": "https://www.companya.com",
+        "Partner A": "https://www.partnera.com"
+    }
+    """
 
-def homepage_matches(domain: str, name: str, fetch: Fetcher) -> Optional[bool]:
-    """Does the homepage mention the company name in its title? None = homepage could not be fetched."""
+    if not path or not path.exists():
+        return {}
+
     try:
-        html = fetch("https://" + domain).decode("utf-8", "ignore")
-    except Exception:
-        return None
-    return norm(name) in norm(_title_text(html)) or norm(name) in norm(domain)
+
+        with open(
+            path,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        return data if isinstance(data, dict) else {}
+
+    except Exception as exc:
+
+        log(
+            f"Could not read domain overrides: {exc}"
+        )
+
+        return {}
 
 
-def wikidata_website(name: str, fetch: Fetcher) -> Optional[str]:
-    """Official website (property P856) of the best-matching Wikidata item."""
-    api = "https://www.wikidata.org/w/api.php?format=json"
-    found = json.loads(fetch(f"{api}&action=wbsearchentities&search={quote(name)}&language=en&type=item&limit=6"))
-    hits = [h for h in found.get("search", []) if difflib.SequenceMatcher(None, norm(h.get("label", "")), norm(name)).ratio() >= 0.8]
-    if not hits:
-        return None
-    ents = json.loads(fetch(f"{api}&action=wbgetentities&props=claims&ids={'|'.join(h['id'] for h in hits)}")).get("entities", {})
-    for h in hits:
-        for claim in ents.get(h["id"], {}).get("claims", {}).get("P856", []):
-            value = claim.get("mainsnak", {}).get("datavalue", {}).get("value")
-            if value:
-                return value
+def get_override_website(
+    name: str,
+    overrides: dict
+) -> str | None:
+    """Find a manually supplied website for an organisation."""
+
+    target = normalise_name(name)
+
+    for key, value in overrides.items():
+
+        if normalise_name(key) != target:
+            continue
+
+        if isinstance(value, dict):
+
+            value = (
+                value.get("website")
+                or value.get("url")
+            )
+
+        if isinstance(value, str):
+
+            return normalise_url(value)
+
     return None
 
 
-def resolve_website(name: str, fetch: Fetcher, overrides: dict[str, str]) -> tuple[Optional[str], str]:
-    """-> (website, how). how: override | wikidata | guessed | not found"""
-    if norm(name) in overrides:
-        return overrides[norm(name)], "override"
+# ============================================================
+# WIKIDATA WEBSITE DISCOVERY
+# ============================================================
+
+def wikidata_website(
+    name: str,
+    fetch=http_get
+) -> str | None:
+    """
+    Try to discover an organisation website through Wikidata.
+
+    Wikidata is used only as a discovery source.
+    A discovered website should be reviewed before use.
+    """
+
     try:
-        site = wikidata_website(name, fetch)
-        if site:
-            return site, "wikidata"
+
+        search_url = (
+            "https://www.wikidata.org/w/api.php"
+            "?action=wbsearchentities"
+            "&search="
+            + requests.utils.quote(name)
+            + "&language=en"
+            + "&format=json"
+            + "&limit=5"
+        )
+
+        search_data = fetch(search_url)
+
+        if not search_data:
+            return None
+
+        search_json = json.loads(search_data)
+
+        for result in search_json.get("search", []):
+
+            entity_id = result.get("id")
+
+            if not entity_id:
+                continue
+
+            entity_url = (
+                "https://www.wikidata.org/wiki/"
+                "Special:EntityData/"
+                + entity_id
+                + ".json"
+            )
+
+            entity_data = fetch(entity_url)
+
+            if not entity_data:
+                continue
+
+            entity_json = json.loads(entity_data)
+
+            entity = (
+                entity_json
+                .get("entities", {})
+                .get(entity_id, {})
+            )
+
+            claims = entity.get("claims", {})
+
+            website_claims = claims.get("P856", [])
+
+            for claim in website_claims:
+
+                website = (
+                    claim.get("mainsnak", {})
+                    .get("datavalue", {})
+                    .get("value")
+                )
+
+                if website:
+                    return normalise_url(website)
+
+    except Exception as exc:
+
+        log(
+            f"Wikidata lookup failed for {name}: {exc}"
+        )
+
+    return None
+
+
+# ============================================================
+# WEBSITE MATCH VALIDATION
+# ============================================================
+
+def homepage_matches(
+    name: str,
+    website: str,
+    fetch=http_get
+) -> bool:
+    """
+    Perform a basic relevance check between an organisation
+    name and the discovered website homepage.
+
+    This is not a guarantee that the domain is official.
+    """
+
+    html = fetch(website)
+
+    if not html:
+        return False
+
+    try:
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+        title = ""
+
+        if soup.title:
+
+            title = soup.title.get_text(
+                " ",
+                strip=True
+            )
+
+        description = ""
+
+        meta = soup.find(
+            "meta",
+            attrs={
+                "name": "description"
+            }
+        )
+
+        if meta:
+
+            description = meta.get(
+                "content",
+                ""
+            )
+
+        page_text = normalise_name(
+            title + " " + description
+        )
+
+        company_text = normalise_name(name)
+
+        domain_text = normalise_name(
+            domain_of(website).split(".")[0]
+        )
+
+        if not company_text:
+            return False
+
+        if company_text in page_text:
+            return True
+
+        if company_text in domain_text:
+            return True
+
+        # Partial match for longer names.
+        if len(company_text) >= 8:
+
+            if company_text[:8] in domain_text:
+                return True
+
+        return False
+
     except Exception:
-        pass
-    base = norm(name)
-    for tld in GUESS_TLDS:  # e.g. assessli.com, assessli.ai ... accepted only when the page title mentions the name
-        if homepage_matches(f"{base}.{tld}", name, fetch):
-            return f"https://{base}.{tld}", "guessed (title matches)"
-    return None, "not found"
+        return False
 
 
-# ------------------------------------------------------------------ batch run
-def run_batch(schema_path, out_path, logo_dir="logos", company_website=None, domains_file=None,
-              max_per_row=4, refresh=False, fetch: Fetcher = http_get, log=print) -> list[dict]:
-    schema_path, out_path, logo_dir = Path(schema_path), Path(out_path), Path(logo_dir)
-    schema = json.load(open(schema_path, encoding="utf-8"))
-    cache = logo_dir / ".cache"
-    if refresh:
-        shutil.rmtree(cache, ignore_errors=True)
-    logo_dir.mkdir(parents=True, exist_ok=True)
-    overrides = {}
-    if domains_file and Path(domains_file).exists():
-        overrides = {norm(k): v for k, v in json.load(open(domains_file, encoding="utf-8")).items()}
+# ============================================================
+# RESOLVE OFFICIAL WEBSITE
+# ============================================================
 
-    # ---- collect the 13 slots
-    slots: list[dict] = []
-    name_c, name_k = _find(schema, NAME_KEYS)
-    site_c, site_k = _find(schema, SITE_KEYS)
-    own_name = (name_c or {}).get(name_k) or "Company"
-    own_site = company_website or (site_c or {}).get(site_k)
-    slots.append({"row": "company_logo", "label": "Company logo", "i": 0, "entry": {"name": own_name, "website": own_site}})
-    row_targets = {}
+def resolve_website(
+    name: str,
+    supplied_website: str | None = None,
+    overrides: dict | None = None,
+    fetch=http_get
+) -> str | None:
+    """
+    Website resolution priority:
+
+    1. Website supplied in the JSON.
+    2. Manually verified company_domains.json entry.
+    3. Wikidata discovery with a basic homepage check.
+
+    Guessed domains are deliberately not used because
+    they may point to unrelated organisations.
+    """
+
+    # 1. Website already present in JSON.
+    website = normalise_url(
+        supplied_website
+    )
+
+    if website:
+        return website
+
+    # 2. Manual website overrides.
+    overrides = overrides or {}
+
+    website = get_override_website(
+        name,
+        overrides
+    )
+
+    if website:
+        return website
+
+    # 3. Wikidata discovery.
+    website = wikidata_website(
+        name,
+        fetch=fetch
+    )
+
+    if website:
+
+        if homepage_matches(
+            name,
+            website,
+            fetch=fetch
+        ):
+            return website
+
+        log(
+            f"Website needs manual verification for "
+            f"{name}: {website}"
+        )
+
+    return None
+
+# ============================================================
+# BUILD LOGO ENTRIES
+# ============================================================
+
+def build_logo_entries(
+    schema: dict,
+    max_per_row: int = 4
+) -> list[dict]:
+    """
+    Build the list of logos to extract.
+
+    Processing order:
+
+    1. Company
+    2. GTM Partners
+    3. Key Customers
+    4. Competitors
+
+    The order inside each category follows the input JSON.
+    """
+
+    entries = []
+
+    # --------------------------------------------------------
+    # 1. COMPANY LOGO
+    # --------------------------------------------------------
+
+    company_data = schema.get(
+        "company",
+        {}
+    )
+
+    if not isinstance(company_data, dict):
+        company_data = {}
+
+    company_name = clean_name(
+        company_data.get("company_name")
+        or schema.get("company_name")
+    )
+
+    if company_name:
+
+        entries.append({
+            "name": company_name,
+            "row": "company_logo",
+
+            "website": (
+                company_data.get("website")
+                or company_data.get("company_website")
+                or company_data.get("official_website")
+            ),
+
+            "logo_url": company_data.get("logo_url"),
+
+            "logo_path": company_data.get("logo_path"),
+        })
+
+    # --------------------------------------------------------
+    # 2. GTM PARTNERS, CUSTOMERS AND COMPETITORS
+    # --------------------------------------------------------
+
     for row, keys in ROWS.items():
-        container, key = _find(schema, keys)
-        if container is None:
-            continue
-        row_targets[row] = (container, key)
-        entries = split_entries(container[key])
-        if len(entries) > max_per_row:
-            log(f"note: {ROW_LABEL[row]} has {len(entries)} names, the template shows {max_per_row}; extras are ignored")
-        for i, e in enumerate(entries[:max_per_row]):
-            slots.append({"row": row, "label": ROW_LABEL[row], "i": i, "entry": e})
 
-    # ---- resolve websites (parallel; each distinct name once)
-    names = {s["entry"]["name"] for s in slots if not s["entry"].get("website") and not s["entry"].get("logo_url") and not s["entry"].get("logo_path")}
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        resolved = dict(zip(sorted(names), pool.map(lambda n: resolve_website(n, fetch, overrides), sorted(names))))
+        value = find_field(
+            schema,
+            keys
+        )
 
-    # ---- fetch logos
-    report, by_name = [], {}
-    for s in slots:
-        e = s["entry"]
-        how = "given in schema" if (e.get("website") or e.get("logo_url") or e.get("logo_path")) else None
-        if how is None:
-            e["website"], how = resolved.get(e["name"], (None, "not found"))
-        msgs: list[str] = []
-        key = norm(e["name"])
-        if key in by_name:                       # same company in several rows: fetch once
-            png = by_name[key]
+        category_entries = split_entries(value)
+
+        selected_entries = category_entries[:max_per_row]
+
+        if len(category_entries) > max_per_row:
+
+            log(
+                f"{ROW_LABELS[row]}: "
+                f"Only the first {max_per_row} entries "
+                f"will be processed."
+            )
+
+        for entry in selected_entries:
+
+            entries.append({
+
+                "name": entry["name"],
+
+                "row": row,
+
+                "website": (
+                    entry.get("website")
+                    or entry.get("company_website")
+                    or entry.get("official_website")
+                    or entry.get("website_url")
+                ),
+
+                "logo_url": entry.get("logo_url"),
+
+                "logo_path": entry.get("logo_path"),
+            })
+
+    return entries
+
+# ============================================================
+# MAIN BATCH PROCESS
+# ============================================================
+
+def run_batch(
+    schema_path: Path,
+    out_path: Path,
+    logo_dir: Path,
+    company_website: str | None = None,
+    domains_file: Path | None = None,
+    max_per_row: int = 4,
+    refresh: bool = False,
+    fetch=http_get,
+) -> None:
+    """
+    Extract logos for the company and related organisations.
+
+    Original JSON:
+        output/final one pager.json
+
+    Processed JSON:
+        output/final one pager_with_logos.json
+
+    Original JSON is never modified.
+    """
+
+    schema_path = schema_path.resolve()
+    out_path = out_path.resolve()
+    logo_dir = logo_dir.resolve()
+
+    # --------------------------------------------------------
+    # 1. Validate input JSON
+    # --------------------------------------------------------
+
+    if not schema_path.exists():
+
+        raise FileNotFoundError(
+            f"Input JSON not found: {schema_path}"
+        )
+
+    with open(
+        schema_path,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        schema = json.load(file)
+
+    if not isinstance(schema, dict):
+
+        raise ValueError(
+            "The input JSON must contain a JSON object."
+        )
+
+    # Create a separate copy.
+    output_schema = json.loads(
+        json.dumps(schema)
+    )
+
+    # --------------------------------------------------------
+    # 2. Create logo folders
+    # --------------------------------------------------------
+
+    logo_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    for folder in LOGO_SUBFOLDERS.values():
+
+        (logo_dir / folder).mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+    cache_dir = logo_dir / ".cache"
+
+    cache_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # --------------------------------------------------------
+    # 3. Load website overrides
+    # --------------------------------------------------------
+
+    overrides = load_domain_overrides(
+        domains_file
+    )
+
+    # --------------------------------------------------------
+    # 4. Build logo entries
+    # --------------------------------------------------------
+
+    entries = build_logo_entries(
+        schema,
+        max_per_row=max_per_row
+    )
+
+    if not entries:
+
+        log(
+            "No company or related organisation names found."
+        )
+
+        return
+
+    log("\nStarting logo extraction...")
+
+    log(
+        f"Total logo entries: {len(entries)}"
+    )
+
+    # --------------------------------------------------------
+    # 5. Prepare company JSON section
+    # --------------------------------------------------------
+
+    company_output = output_schema.setdefault(
+        "company",
+        {}
+    )
+
+    if not isinstance(company_output, dict):
+
+        raise ValueError(
+            "The 'company' section must be a JSON object."
+        )
+
+    # Initialise category arrays.
+    for row in ROWS:
+
+        company_output[row] = []
+
+    # --------------------------------------------------------
+    # 6. Process each logo
+    # --------------------------------------------------------
+
+    for entry in entries:
+
+        name = entry["name"]
+
+        row = entry["row"]
+
+        log("\n" + "-" * 50)
+
+        log(f"Processing: {name}")
+
+        # ----------------------------------------------------
+        # Resolve website
+        # ----------------------------------------------------
+
+        supplied_website = entry.get("website")
+
+        if row == "company_logo" and company_website:
+
+            supplied_website = company_website
+
+        website = resolve_website(
+            name=name,
+            supplied_website=supplied_website,
+            overrides=overrides,
+            fetch=fetch
+        )
+
+        if website:
+
+            log(f"Website: {website}")
+
         else:
-            png = get_logo(e, cache, schema_path.parent, fetch=fetch, log=msgs.append) if (e.get("website") or e.get("logo_url") or e.get("logo_path")) else None
-            by_name[key] = png
-        row = {"slot": f"{s['label']} #{s['i'] + 1}" if s["row"] != "company_logo" else s["label"], "name": e["name"],
-               "website": e.get("website"), "website_from": how, "logo_file": None, "note": ""}
-        if png:
-            dest = logo_dir / f"{slug(e['name'])}.png"
-            shutil.copyfile(png, dest)
-            side = max(Image.open(dest).size)
-            e["logo_path"] = os.path.relpath(dest, out_path.parent).replace("\\", "/")
-            row["logo_file"] = str(dest)
-            src = next((m for m in msgs if m.startswith("logo for")), "")
-            row["note"] = ("LOW-RES (looks like a favicon) - " if side < 128 else "") + (src.split(" from ", 1)[1] if " from " in src else "cached")
+
+            log(
+                f"Website not verified for: {name}"
+            )
+
+        # ----------------------------------------------------
+        # Prepare logo entry
+        # ----------------------------------------------------
+
+        logo_entry = {
+            "name": name,
+            "website": website,
+            "logo_url": entry.get("logo_url"),
+            "logo_path": entry.get("logo_path"),
+        }
+
+        # ----------------------------------------------------
+        # Download or retrieve cached logo
+        # ----------------------------------------------------
+
+        cached_logo = get_logo(
+            entry=logo_entry,
+            cache_dir=cache_dir,
+            base_dir=schema_path.parent,
+            fetch=fetch,
+            refresh=refresh
+        )
+
+        final_logo_path = None
+
+        # ----------------------------------------------------
+        # Save logo in category folder
+        # ----------------------------------------------------
+
+        if cached_logo and cached_logo.exists():
+
+            folder_name = LOGO_SUBFOLDERS[row]
+
+            category_folder = logo_dir / folder_name
+
+            category_folder.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            destination = (
+                category_folder
+                / f"{slug(name)}.png"
+            )
+
+            # Avoid copying a file onto itself.
+            if cached_logo.resolve() != destination.resolve():
+
+                shutil.copyfile(
+                    cached_logo,
+                    destination
+                )
+
+            # Store path relative to output JSON folder.
+            final_logo_path = Path(
+                os.path.relpath(
+                    destination,
+                    out_path.parent
+                )
+            ).as_posix()
+
+            log(
+                f"Saved logo: {destination}"
+            )
+
         else:
-            row["note"] = "NO LOGO FOUND - the name will be written instead. Add the site to company_domains.json or give logo_url."
-        report.append(row)
 
-    # ---- write the schema for fill_template.py: rows become [{name, website, logo_path}, ...]
-    out = json.loads(json.dumps(schema))
-    for row, (container, key) in row_targets.items():
-        mine = [s["entry"] for s in slots if s["row"] == row]
-        c2, k2 = _find(out, [key])
-        c2[k2] = mine
-    own = next(s["entry"] for s in slots if s["row"] == "company_logo")
-    target = _find(out, NAME_KEYS)[0] or out
-    target["company_logo"] = {k: v for k, v in own.items() if v}
-    if own.get("website") and not site_k:
-        target["website"] = own["website"]
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    json.dump(out, open(out_path, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+            log(
+                f"Logo unavailable: {name}"
+            )
 
-    log(f"\n{'SLOT':<22}{'NAME':<22}{'WEBSITE':<30}{'LOGO'}")
-    for r in report:
-        log(f"{r['slot']:<22}{r['name'][:20]:<22}{(r['website'] or '-')[:28]:<30}{'OK ' if r['logo_file'] else 'MISSING '}{r['note']}")
-    missing = sum(1 for r in report if not r["logo_file"])
-    log(f"\n{len(report) - missing}/{len(report)} logos fetched -> {logo_dir}/   schema with logos -> {out_path}")
-    return report
+        # ----------------------------------------------------
+        # Create processed JSON entry
+        # ----------------------------------------------------
 
+        result_entry = {
+            "name": name,
+            "website": website,
+            "logo_path": final_logo_path,
+        }
+
+        if row == "company_logo":
+
+            company_output["company_logo"] = result_entry
+
+        else:
+
+            company_output[row].append(
+                result_entry
+            )
+
+    # --------------------------------------------------------
+    # 7. Save processed JSON
+    # --------------------------------------------------------
+
+    out_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with open(
+        out_path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            output_schema,
+            file,
+            indent=4,
+            ensure_ascii=False
+        )
+
+    # --------------------------------------------------------
+    # 8. Extraction summary
+    # --------------------------------------------------------
+
+    log("\n" + "=" * 55)
+
+    log("LOGO EXTRACTION COMPLETED")
+
+    log("=" * 55)
+
+    company_logo = company_output.get(
+        "company_logo"
+    )
+
+    if (
+        company_logo
+        and company_logo.get("logo_path")
+    ):
+
+        log("Company logo: Found")
+
+    else:
+
+        log("Company logo: Not found")
+
+    for row in ROWS:
+
+        items = company_output.get(
+            row,
+            []
+        )
+
+        found = sum(
+            1
+            for item in items
+            if item.get("logo_path")
+        )
+
+        log(
+            f"{ROW_LABELS[row]}: "
+            f"{found}/{len(items)} logos found"
+        )
+
+    log(f"\nLogo folder: {logo_dir}")
+
+    log(f"Output JSON: {out_path}")
+
+    log("=" * 55)
+
+# ============================================================
+# COMMAND LINE INTERFACE
+# ============================================================
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Extract company, partner, customer and "
+            "competitor logos for the One-Pager Generator."
+        )
+    )
+
+    # --------------------------------------------------------
+    # Input JSON
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--schema",
+        required=True,
+        help="Path to the original final one-pager JSON."
+    )
+
+    # --------------------------------------------------------
+    # Output JSON
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="Path for the processed JSON containing logo paths."
+    )
+
+    # --------------------------------------------------------
+    # Logo folder
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--logo-dir",
+        default="logo_assets",
+        help="Folder where logos will be stored."
+    )
+
+    # --------------------------------------------------------
+    # Company website
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--company-website",
+        default=None,
+        help="Official company website URL."
+    )
+
+    # --------------------------------------------------------
+    # Manual website overrides
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--domains",
+        default="company_domains.json",
+        help="Optional JSON file containing verified websites."
+    )
+
+    # --------------------------------------------------------
+    # Maximum logos per category
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--max-per-row",
+        type=int,
+        default=4,
+        help="Maximum number of logos per bottom category."
+    )
+
+    # --------------------------------------------------------
+    # Refresh cached logos
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Download logos again instead of using cached logos."
+    )
+
+    args = parser.parse_args()
+
+    if args.max_per_row < 1:
+
+        parser.error(
+            "--max-per-row must be at least 1"
+        )
+
+    schema_path = Path(args.schema)
+
+    out_path = Path(args.out)
+
+    logo_dir = Path(args.logo_dir)
+
+    domains_file = (
+        Path(args.domains)
+        if args.domains
+        else None
+    )
+
+    run_batch(
+        schema_path=schema_path,
+        out_path=out_path,
+        logo_dir=logo_dir,
+        company_website=args.company_website,
+        domains_file=domains_file,
+        max_per_row=args.max_per_row,
+        refresh=args.refresh
+    )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
-    import argparse
-
-    ap = argparse.ArgumentParser(description="Fetch logos from the official company websites")
-    ap.add_argument("--schema", help="final schema json -> batch mode (all 13 logo places)")
-    ap.add_argument("--out", help="batch mode: schema json to write (default <schema>_with_logos.json)")
-    ap.add_argument("--logo-dir", default="logos")
-    ap.add_argument("--company-website", help="official website of the profiled company if it is not in the schema")
-    ap.add_argument("--domains", default="company_domains.json", help='optional {"Company name": "https://official-site"} overrides')
-    ap.add_argument("--max-per-row", type=int, default=4, help="logo slots per row in the template")
-    ap.add_argument("--refresh", action="store_true", help="ignore cached logos and fetch again")
-    ap.add_argument("--name", default="")
-    ap.add_argument("--website", default="")
-    ap.add_argument("--logo-url", default="")
-    ap.add_argument("--out-dir", default=".logo_cache")
-    a = ap.parse_args()
-    if a.schema:
-        out = a.out or str(Path(a.schema).with_name(Path(a.schema).stem + "_with_logos.json"))
-        rep = run_batch(a.schema, out, a.logo_dir, a.company_website, a.domains, a.max_per_row, a.refresh)
-        sys.exit(0 if all(r["logo_file"] for r in rep) else 1)
-    print(get_logo({"name": a.name, "website": a.website, "logo_url": a.logo_url}, a.out_dir, log=print))
+    main()
