@@ -1,4 +1,4 @@
-
+ 
 from pathlib import Path
 import json
 import re
@@ -43,6 +43,7 @@ OUTPUT_FILE = (
 # ============================================================
 
 COMPANY_FIELDS = {
+
     62: "company_name",
     63: "website",
     64: "overview",
@@ -50,10 +51,12 @@ COMPANY_FIELDS = {
     95: "employee_count",
     65: "funding",
     96: "revenue",
+
 }
 
 
 PRODUCT_FIELDS = {
+
     80: "product_name",
     79: "description",
     81: "vertical_market",
@@ -65,6 +68,7 @@ PRODUCT_FIELDS = {
     91: "ai_framework",
     92: "serving_framework",
     94: "additional_ai_software_stack",
+
 }
 
 
@@ -96,6 +100,7 @@ PICTURE_PLACEHOLDERS = {
         78,
         76,
     ],
+
 }
 
 
@@ -112,14 +117,17 @@ LOGO_FOLDERS = {
     "key_customers": "customers",
 
     "competitors": "competitors",
+
 }
 
 
 SUPPORTED_IMAGE_EXTENSIONS = {
+
     ".png",
     ".jpg",
     ".jpeg",
     ".webp",
+
 }
 
 
@@ -181,14 +189,15 @@ def get_placeholder(slide, placeholder_index):
             return shape
 
     print(
-        f"WARNING: Placeholder {placeholder_index} not found."
+        f"WARNING: Text placeholder "
+        f"{placeholder_index} not found."
     )
 
     return None
 
 
 # ============================================================
-# 7. INSERT OR CLEAR TEXT
+# 7. INSERT TEXT OR CLEAR PLACEHOLDER
 # ============================================================
 
 def insert_text(slide, placeholder_index, value):
@@ -212,42 +221,60 @@ def insert_text(slide, placeholder_index, value):
 
     text_frame = shape.text_frame
 
-    # Always clear existing instructional/sample text.
-    # This also handles null and missing JSON fields.
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Clear existing template example/instructional text
+    # BEFORE checking the JSON value.
+    # --------------------------------------------------------
+
     text_frame.clear()
+
+    # --------------------------------------------------------
+    # CASE 1: JSON value is null
+    # --------------------------------------------------------
 
     if value is None:
 
         print(
-            f"Cleared placeholder {placeholder_index}: "
-            "value is null."
+            f"CLEARED placeholder {placeholder_index}: "
+            "JSON value is null."
         )
 
         return
 
-    value = str(value).strip()
+    # --------------------------------------------------------
+    # CASE 2: JSON value is an empty string
+    # --------------------------------------------------------
 
-    if not value:
+    if isinstance(value, str):
 
-        print(
-            f"Cleared placeholder {placeholder_index}: "
-            "value is empty."
-        )
+        value = value.strip()
 
-        return
+        if not value:
 
-    # Insert new text
+            print(
+                f"CLEARED placeholder {placeholder_index}: "
+                "JSON value is empty."
+            )
+
+            return
+
+    # --------------------------------------------------------
+    # CASE 3: JSON contains an actual value
+    # --------------------------------------------------------
+
     paragraph = text_frame.paragraphs[0]
 
-    paragraph.text = value
+    paragraph.text = str(value).strip()
 
-    # Preserve template text-fitting behaviour
+    # Preserve text-fitting behaviour
     text_frame.auto_size = (
         MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     )
 
     print(
-        f"Inserted text into placeholder {placeholder_index}"
+        f"INSERTED placeholder {placeholder_index}: "
+        f"{value}"
     )
 
 
@@ -264,6 +291,12 @@ def insert_company_information(slide, company_data):
     for placeholder_index, json_key in COMPANY_FIELDS.items():
 
         value = company_data.get(json_key)
+
+        print(
+            f"Field: {json_key} | "
+            f"Value: {repr(value)} | "
+            f"Placeholder: {placeholder_index}"
+        )
 
         insert_text(
             slide,
@@ -286,6 +319,12 @@ def insert_product_information(slide, product_data):
 
         value = product_data.get(json_key)
 
+        print(
+            f"Field: {json_key} | "
+            f"Value: {repr(value)} | "
+            f"Placeholder: {placeholder_index}"
+        )
+
         insert_text(
             slide,
             placeholder_index,
@@ -301,12 +340,8 @@ def normalise_name(value):
 
     value = str(value).strip().lower()
 
-    # Remove file extension if present
     value = Path(value).stem
 
-    # Keep only letters and numbers.
-    # This makes names match even if filenames use
-    # spaces, hyphens or underscores.
     value = re.sub(
         r"[^a-z0-9]+",
         "",
@@ -317,7 +352,7 @@ def normalise_name(value):
 
 
 # ============================================================
-# 11. EXTRACT NAMES FROM JSON VALUES
+# 11. EXTRACT ENTRIES FROM JSON
 # ============================================================
 
 def extract_entries(value):
@@ -325,7 +360,6 @@ def extract_entries(value):
     if value is None:
         return []
 
-    # Handle a list of names or dictionaries
     if isinstance(value, list):
 
         return [
@@ -334,12 +368,10 @@ def extract_entries(value):
             if item is not None
         ]
 
-    # Handle a single dictionary
     if isinstance(value, dict):
 
         return [value]
 
-    # Handle a string containing multiple names
     if isinstance(value, str):
 
         value = value.strip()
@@ -411,7 +443,7 @@ def find_logo_image(category, entry):
         return None
 
     # --------------------------------------------------------
-    # First: use an explicit logo_path if present in JSON
+    # First: check explicit logo_path in JSON
     # --------------------------------------------------------
 
     if isinstance(entry, dict):
@@ -431,19 +463,18 @@ def find_logo_image(category, entry):
                 return candidate
 
     # --------------------------------------------------------
-    # Get the name of the company / partner / customer
+    # Get company / partner / customer name
     # --------------------------------------------------------
 
     name = get_entry_name(entry)
 
     if not name:
-
         return None
 
     target_name = normalise_name(name)
 
     # --------------------------------------------------------
-    # Find a matching filename
+    # Match logo filename with JSON name
     # --------------------------------------------------------
 
     for image_path in sorted(folder_path.iterdir()):
@@ -500,7 +531,7 @@ def get_picture_placeholder(slide, placeholder_index):
 
 
 # ============================================================
-# 15. INSERT LOGO USING EXISTING PLACEHOLDER
+# 15. INSERT LOGO INTO PICTURE PLACEHOLDER
 # ============================================================
 
 def insert_logo(slide, placeholder_index, logo_path):
@@ -508,7 +539,7 @@ def insert_logo(slide, placeholder_index, logo_path):
     if logo_path is None:
 
         print(
-            f"Placeholder {placeholder_index} "
+            f"Picture placeholder {placeholder_index} "
             "left empty."
         )
 
@@ -530,8 +561,7 @@ def insert_logo(slide, placeholder_index, logo_path):
     if target_placeholder is None:
         return
 
-    # Use the same image replacement method
-    # verified in test_logo_insertion.py.
+    # Use the tested image replacement technique
     image_part, image_rid = (
         slide.part.get_or_add_image_part(
             str(logo_path)
@@ -558,7 +588,7 @@ def insert_logo(slide, placeholder_index, logo_path):
     )
 
     print(
-        f"Inserted logo into picture placeholder "
+        f"Inserted logo into placeholder "
         f"{placeholder_index}: {logo_path.name}"
     )
 
@@ -581,7 +611,7 @@ def insert_company_logo(slide, company_data):
 
         print(
             "Company name is empty. "
-            "Company logo placeholder will remain empty."
+            "Company logo placeholder remains empty."
         )
 
         return
@@ -620,15 +650,15 @@ def insert_category_logos(
         company_data.get(category)
     )
 
-    # Only the first four JSON entries are considered.
+    # Only the first four JSON entries
     entries = entries[:4]
 
     for position, placeholder_index in enumerate(
         placeholder_indices
     ):
 
-        # If the JSON has fewer than four entries,
-        # leave the remaining placeholders empty.
+        # No corresponding JSON entry:
+        # leave the placeholder empty.
         if position >= len(entries):
 
             insert_logo(
@@ -663,27 +693,23 @@ def insert_all_logos(slide, company_data):
         "\n========== LOGO INSERTION =========="
     )
 
-    # Company logo
     insert_company_logo(
         slide,
         company_data
     )
 
-    # GTM partners
     insert_category_logos(
         slide,
         company_data,
         "gtm_partners"
     )
 
-    # Customers
     insert_category_logos(
         slide,
         company_data,
         "key_customers"
     )
 
-    # Competitors
     insert_category_logos(
         slide,
         company_data,
@@ -702,7 +728,7 @@ def generate_presentation():
     print("========================================")
 
     # --------------------------------------------------------
-    # Check required files
+    # Check template
     # --------------------------------------------------------
 
     if not TEMPLATE_FILE.exists():
@@ -711,11 +737,19 @@ def generate_presentation():
             f"Template not found: {TEMPLATE_FILE}"
         )
 
+    # --------------------------------------------------------
+    # Check JSON
+    # --------------------------------------------------------
+
     if not JSON_FILE.exists():
 
         raise FileNotFoundError(
             f"JSON file not found: {JSON_FILE}"
         )
+
+    # --------------------------------------------------------
+    # Check logo folder
+    # --------------------------------------------------------
 
     if not LOGO_DIR.exists():
 
@@ -724,17 +758,17 @@ def generate_presentation():
         )
 
         print(
-            "Text information will still be generated."
+            "PowerPoint will be generated without logos."
         )
 
     # --------------------------------------------------------
-    # Load JSON data
+    # Load JSON
     # --------------------------------------------------------
 
     company_data, product_data = load_json_data()
 
     # --------------------------------------------------------
-    # Load clean PowerPoint template
+    # Load clean template
     # --------------------------------------------------------
 
     presentation = Presentation(
@@ -768,7 +802,7 @@ def generate_presentation():
     )
 
     # --------------------------------------------------------
-    # Insert company and category logos
+    # Insert logos
     # --------------------------------------------------------
 
     insert_all_logos(
@@ -777,7 +811,7 @@ def generate_presentation():
     )
 
     # --------------------------------------------------------
-    # Create output folder
+    # Create output directory
     # --------------------------------------------------------
 
     OUTPUT_FILE.parent.mkdir(
