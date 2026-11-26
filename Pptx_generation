@@ -1,0 +1,813 @@
+
+from pathlib import Path
+import json
+import re
+
+from pptx import Presentation
+from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
+
+
+# ============================================================
+# 1. PROJECT PATHS
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+TEMPLATE_FILE = (
+    BASE_DIR
+    / "templates"
+    / "company_one_pager_template.pptx"
+)
+
+JSON_FILE = (
+    BASE_DIR
+    / "output"
+    / "final one pager.json"
+)
+
+LOGO_DIR = (
+    BASE_DIR
+    / "logo_assets"
+)
+
+OUTPUT_FILE = (
+    BASE_DIR
+    / "output"
+    / "final_one_pager.pptx"
+)
+
+
+# ============================================================
+# 2. TEXT PLACEHOLDER MAPPING
+# ============================================================
+
+COMPANY_FIELDS = {
+    62: "company_name",
+    63: "website",
+    64: "overview",
+    67: "headquarters",
+    95: "employee_count",
+    65: "funding",
+    96: "revenue",
+}
+
+
+PRODUCT_FIELDS = {
+    80: "product_name",
+    79: "description",
+    81: "vertical_market",
+    86: "training_hardware",
+    87: "inference_hardware",
+    88: "route_to_market",
+    89: "deployment_type",
+    90: "models",
+    91: "ai_framework",
+    92: "serving_framework",
+    94: "additional_ai_software_stack",
+}
+
+
+# ============================================================
+# 3. PICTURE PLACEHOLDER MAPPING
+# ============================================================
+
+PICTURE_PLACEHOLDERS = {
+
+    "company_logo": 48,
+
+    "gtm_partners": [
+        49,
+        51,
+        52,
+        50,
+    ],
+
+    "key_customers": [
+        71,
+        73,
+        74,
+        72,
+    ],
+
+    "competitors": [
+        75,
+        77,
+        78,
+        76,
+    ],
+}
+
+
+# ============================================================
+# 4. LOGO FOLDER MAPPING
+# ============================================================
+
+LOGO_FOLDERS = {
+
+    "company_logo": "company",
+
+    "gtm_partners": "gtm_partners",
+
+    "key_customers": "customers",
+
+    "competitors": "competitors",
+}
+
+
+SUPPORTED_IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
+
+
+# ============================================================
+# 5. LOAD JSON DATA
+# ============================================================
+
+def load_json_data():
+
+    if not JSON_FILE.exists():
+
+        raise FileNotFoundError(
+            f"JSON file not found: {JSON_FILE}"
+        )
+
+    with open(
+        JSON_FILE,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        data = json.load(file)
+
+    company_data = data.get("company") or {}
+
+    product_data = data.get("product") or {}
+
+    if not isinstance(company_data, dict):
+
+        raise ValueError(
+            "The company section must be a JSON object."
+        )
+
+    if not isinstance(product_data, dict):
+
+        raise ValueError(
+            "The product section must be a JSON object."
+        )
+
+    return company_data, product_data
+
+
+# ============================================================
+# 6. FIND TEXT PLACEHOLDER
+# ============================================================
+
+def get_placeholder(slide, placeholder_index):
+
+    for shape in slide.shapes:
+
+        if not shape.is_placeholder:
+            continue
+
+        if (
+            shape.placeholder_format.idx
+            == placeholder_index
+        ):
+
+            return shape
+
+    print(
+        f"WARNING: Placeholder {placeholder_index} not found."
+    )
+
+    return None
+
+
+# ============================================================
+# 7. INSERT OR CLEAR TEXT
+# ============================================================
+
+def insert_text(slide, placeholder_index, value):
+
+    shape = get_placeholder(
+        slide,
+        placeholder_index
+    )
+
+    if shape is None:
+        return
+
+    if not shape.has_text_frame:
+
+        print(
+            f"WARNING: Placeholder {placeholder_index} "
+            "does not have a text frame."
+        )
+
+        return
+
+    text_frame = shape.text_frame
+
+    # Always clear existing instructional/sample text.
+    # This also handles null and missing JSON fields.
+    text_frame.clear()
+
+    if value is None:
+
+        print(
+            f"Cleared placeholder {placeholder_index}: "
+            "value is null."
+        )
+
+        return
+
+    value = str(value).strip()
+
+    if not value:
+
+        print(
+            f"Cleared placeholder {placeholder_index}: "
+            "value is empty."
+        )
+
+        return
+
+    # Insert new text
+    paragraph = text_frame.paragraphs[0]
+
+    paragraph.text = value
+
+    # Preserve template text-fitting behaviour
+    text_frame.auto_size = (
+        MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    )
+
+    print(
+        f"Inserted text into placeholder {placeholder_index}"
+    )
+
+
+# ============================================================
+# 8. INSERT COMPANY INFORMATION
+# ============================================================
+
+def insert_company_information(slide, company_data):
+
+    print(
+        "\n========== COMPANY INFORMATION =========="
+    )
+
+    for placeholder_index, json_key in COMPANY_FIELDS.items():
+
+        value = company_data.get(json_key)
+
+        insert_text(
+            slide,
+            placeholder_index,
+            value
+        )
+
+
+# ============================================================
+# 9. INSERT PRODUCT INFORMATION
+# ============================================================
+
+def insert_product_information(slide, product_data):
+
+    print(
+        "\n========== PRODUCT INFORMATION =========="
+    )
+
+    for placeholder_index, json_key in PRODUCT_FIELDS.items():
+
+        value = product_data.get(json_key)
+
+        insert_text(
+            slide,
+            placeholder_index,
+            value
+        )
+
+
+# ============================================================
+# 10. NORMALISE NAMES FOR LOGO MATCHING
+# ============================================================
+
+def normalise_name(value):
+
+    value = str(value).strip().lower()
+
+    # Remove file extension if present
+    value = Path(value).stem
+
+    # Keep only letters and numbers.
+    # This makes names match even if filenames use
+    # spaces, hyphens or underscores.
+    value = re.sub(
+        r"[^a-z0-9]+",
+        "",
+        value
+    )
+
+    return value
+
+
+# ============================================================
+# 11. EXTRACT NAMES FROM JSON VALUES
+# ============================================================
+
+def extract_entries(value):
+
+    if value is None:
+        return []
+
+    # Handle a list of names or dictionaries
+    if isinstance(value, list):
+
+        return [
+            item
+            for item in value
+            if item is not None
+        ]
+
+    # Handle a single dictionary
+    if isinstance(value, dict):
+
+        return [value]
+
+    # Handle a string containing multiple names
+    if isinstance(value, str):
+
+        value = value.strip()
+
+        if not value:
+            return []
+
+        return [
+            item.strip()
+            for item in re.split(
+                r"[,;\n]+",
+                value
+            )
+            if item.strip()
+        ]
+
+    return [value]
+
+
+# ============================================================
+# 12. GET NAME FROM AN ENTRY
+# ============================================================
+
+def get_entry_name(entry):
+
+    if isinstance(entry, dict):
+
+        name_keys = [
+            "name",
+            "company_name",
+            "partner_name",
+            "customer_name",
+            "competitor_name",
+            "title",
+        ]
+
+        for key in name_keys:
+
+            value = entry.get(key)
+
+            if value:
+
+                return str(value).strip()
+
+        return None
+
+    if entry is None:
+        return None
+
+    return str(entry).strip()
+
+
+# ============================================================
+# 13. FIND LOGO IMAGE
+# ============================================================
+
+def find_logo_image(category, entry):
+
+    folder_name = LOGO_FOLDERS[category]
+
+    folder_path = LOGO_DIR / folder_name
+
+    if not folder_path.exists():
+
+        print(
+            f"Logo folder not found: {folder_path}"
+        )
+
+        return None
+
+    # --------------------------------------------------------
+    # First: use an explicit logo_path if present in JSON
+    # --------------------------------------------------------
+
+    if isinstance(entry, dict):
+
+        logo_path = entry.get("logo_path")
+
+        if logo_path:
+
+            candidate = Path(logo_path)
+
+            if not candidate.is_absolute():
+
+                candidate = BASE_DIR / candidate
+
+            if candidate.exists():
+
+                return candidate
+
+    # --------------------------------------------------------
+    # Get the name of the company / partner / customer
+    # --------------------------------------------------------
+
+    name = get_entry_name(entry)
+
+    if not name:
+
+        return None
+
+    target_name = normalise_name(name)
+
+    # --------------------------------------------------------
+    # Find a matching filename
+    # --------------------------------------------------------
+
+    for image_path in sorted(folder_path.iterdir()):
+
+        if not image_path.is_file():
+            continue
+
+        if (
+            image_path.suffix.lower()
+            not in SUPPORTED_IMAGE_EXTENSIONS
+        ):
+            continue
+
+        file_name = normalise_name(
+            image_path.name
+        )
+
+        if file_name == target_name:
+
+            return image_path
+
+    print(
+        f"Logo not found for: {name}"
+    )
+
+    return None
+
+
+# ============================================================
+# 14. FIND PICTURE PLACEHOLDER
+# ============================================================
+
+def get_picture_placeholder(slide, placeholder_index):
+
+    for shape in slide.shapes:
+
+        if not shape.is_placeholder:
+            continue
+
+        if (
+            shape.placeholder_format.idx
+            == placeholder_index
+            and shape.placeholder_format.type == 18
+        ):
+
+            return shape
+
+    print(
+        f"WARNING: Picture placeholder "
+        f"{placeholder_index} not found."
+    )
+
+    return None
+
+
+# ============================================================
+# 15. INSERT LOGO USING EXISTING PLACEHOLDER
+# ============================================================
+
+def insert_logo(slide, placeholder_index, logo_path):
+
+    if logo_path is None:
+
+        print(
+            f"Placeholder {placeholder_index} "
+            "left empty."
+        )
+
+        return
+
+    if not logo_path.exists():
+
+        print(
+            f"Logo file does not exist: {logo_path}"
+        )
+
+        return
+
+    target_placeholder = get_picture_placeholder(
+        slide,
+        placeholder_index
+    )
+
+    if target_placeholder is None:
+        return
+
+    # Use the same image replacement method
+    # verified in test_logo_insertion.py.
+    image_part, image_rid = (
+        slide.part.get_or_add_image_part(
+            str(logo_path)
+        )
+    )
+
+    blip = target_placeholder.element.find(
+        ".//" + qn("a:blip")
+    )
+
+    if blip is None:
+
+        print(
+            f"WARNING: Picture placeholder "
+            f"{placeholder_index} has no image element."
+        )
+
+        return
+
+    # Replace the transparent image relationship
+    blip.set(
+        qn("r:embed"),
+        image_rid
+    )
+
+    print(
+        f"Inserted logo into picture placeholder "
+        f"{placeholder_index}: {logo_path.name}"
+    )
+
+
+# ============================================================
+# 16. INSERT COMPANY LOGO
+# ============================================================
+
+def insert_company_logo(slide, company_data):
+
+    print(
+        "\n========== COMPANY LOGO =========="
+    )
+
+    company_name = company_data.get(
+        "company_name"
+    )
+
+    if not company_name:
+
+        print(
+            "Company name is empty. "
+            "Company logo placeholder will remain empty."
+        )
+
+        return
+
+    logo_path = find_logo_image(
+        "company_logo",
+        company_name
+    )
+
+    insert_logo(
+        slide,
+        PICTURE_PLACEHOLDERS["company_logo"],
+        logo_path
+    )
+
+
+# ============================================================
+# 17. INSERT CATEGORY LOGOS
+# ============================================================
+
+def insert_category_logos(
+    slide,
+    company_data,
+    category
+):
+
+    print(
+        f"\n========== {category.upper()} LOGOS =========="
+    )
+
+    placeholder_indices = (
+        PICTURE_PLACEHOLDERS[category]
+    )
+
+    entries = extract_entries(
+        company_data.get(category)
+    )
+
+    # Only the first four JSON entries are considered.
+    entries = entries[:4]
+
+    for position, placeholder_index in enumerate(
+        placeholder_indices
+    ):
+
+        # If the JSON has fewer than four entries,
+        # leave the remaining placeholders empty.
+        if position >= len(entries):
+
+            insert_logo(
+                slide,
+                placeholder_index,
+                None
+            )
+
+            continue
+
+        entry = entries[position]
+
+        logo_path = find_logo_image(
+            category,
+            entry
+        )
+
+        insert_logo(
+            slide,
+            placeholder_index,
+            logo_path
+        )
+
+
+# ============================================================
+# 18. INSERT ALL LOGOS
+# ============================================================
+
+def insert_all_logos(slide, company_data):
+
+    print(
+        "\n========== LOGO INSERTION =========="
+    )
+
+    # Company logo
+    insert_company_logo(
+        slide,
+        company_data
+    )
+
+    # GTM partners
+    insert_category_logos(
+        slide,
+        company_data,
+        "gtm_partners"
+    )
+
+    # Customers
+    insert_category_logos(
+        slide,
+        company_data,
+        "key_customers"
+    )
+
+    # Competitors
+    insert_category_logos(
+        slide,
+        company_data,
+        "competitors"
+    )
+
+
+# ============================================================
+# 19. GENERATE POWERPOINT
+# ============================================================
+
+def generate_presentation():
+
+    print("\n========================================")
+    print("       ONE-PAGER GENERATOR")
+    print("========================================")
+
+    # --------------------------------------------------------
+    # Check required files
+    # --------------------------------------------------------
+
+    if not TEMPLATE_FILE.exists():
+
+        raise FileNotFoundError(
+            f"Template not found: {TEMPLATE_FILE}"
+        )
+
+    if not JSON_FILE.exists():
+
+        raise FileNotFoundError(
+            f"JSON file not found: {JSON_FILE}"
+        )
+
+    if not LOGO_DIR.exists():
+
+        print(
+            f"WARNING: Logo directory not found: {LOGO_DIR}"
+        )
+
+        print(
+            "Text information will still be generated."
+        )
+
+    # --------------------------------------------------------
+    # Load JSON data
+    # --------------------------------------------------------
+
+    company_data, product_data = load_json_data()
+
+    # --------------------------------------------------------
+    # Load clean PowerPoint template
+    # --------------------------------------------------------
+
+    presentation = Presentation(
+        str(TEMPLATE_FILE)
+    )
+
+    if len(presentation.slides) == 0:
+
+        raise ValueError(
+            "The PowerPoint template contains no slides."
+        )
+
+    slide = presentation.slides[0]
+
+    # --------------------------------------------------------
+    # Insert company information
+    # --------------------------------------------------------
+
+    insert_company_information(
+        slide,
+        company_data
+    )
+
+    # --------------------------------------------------------
+    # Insert product information
+    # --------------------------------------------------------
+
+    insert_product_information(
+        slide,
+        product_data
+    )
+
+    # --------------------------------------------------------
+    # Insert company and category logos
+    # --------------------------------------------------------
+
+    insert_all_logos(
+        slide,
+        company_data
+    )
+
+    # --------------------------------------------------------
+    # Create output folder
+    # --------------------------------------------------------
+
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # --------------------------------------------------------
+    # Save editable PowerPoint
+    # --------------------------------------------------------
+
+    presentation.save(
+        str(OUTPUT_FILE)
+    )
+
+    print("\n========================================")
+    print("  POWERPOINT GENERATION COMPLETED")
+    print("========================================")
+
+    print(
+        "\nOutput file:"
+    )
+
+    print(OUTPUT_FILE)
+
+
+# ============================================================
+# 20. MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    generate_presentation()
